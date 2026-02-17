@@ -293,18 +293,10 @@ public class MainDashboard extends JFrame implements ActionListener {
             }
         } 
         else if (e.getSource() == btnPatient) {
-            JOptionPane.showMessageDialog(this, 
-                "Module Gestion Patients en cours de développement...", 
-                "Information", 
-                JOptionPane.INFORMATION_MESSAGE);
-            // TODO: new PatientManagement();
+            new PatientPage(username, userRole);
         }
         else if (e.getSource() == btnDoctor) {
-            JOptionPane.showMessageDialog(this, 
-                "Module Gestion Médecins en cours de développement...", 
-                "Information", 
-                JOptionPane.INFORMATION_MESSAGE);
-            // TODO: new DoctorManagement();
+            new MedecinPage(username, userRole);
         }
         else if (e.getSource() == btnAdmission) {
             JOptionPane.showMessageDialog(this, 
@@ -328,18 +320,10 @@ public class MainDashboard extends JFrame implements ActionListener {
             // TODO: new ConsultationManagement();
         }
         else if (e.getSource() == btnExamen) {
-            JOptionPane.showMessageDialog(this, 
-                "Module Examens en cours de développement...", 
-                "Information", 
-                JOptionPane.INFORMATION_MESSAGE);
-            // TODO: new ExamenManagement();
+            new ExamPage(username, userRole);
         }
         else if (e.getSource() == btnMedicine) {
-            JOptionPane.showMessageDialog(this, 
-                "Module Pharmacie en cours de développement...", 
-                "Information", 
-                JOptionPane.INFORMATION_MESSAGE);
-            // TODO: new MedicineManagement();
+            new MedicinesPage(username, userRole);
         }
         else if (e.getSource() == btnBilling) {
             JOptionPane.showMessageDialog(this, 
