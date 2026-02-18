@@ -9,6 +9,7 @@ import java.io.IOException;
 
 public class DBConnection {
     
+    private static final String DRIVER = "com.mysql.cj.jdbc.Driver";
     private static String url;
     private static String user;
     private static String password;
@@ -20,6 +21,15 @@ public class DBConnection {
             url = props.getProperty("db.url");
             user = props.getProperty("db.user");
             password = props.getProperty("db.password");
+        }
+
+        // Try to load the MySQL JDBC driver explicitly
+        try {
+            Class.forName(DRIVER);
+            System.out.println("MySQL JDBC driver loaded successfully.");
+        } catch (ClassNotFoundException e) {
+            System.out.println("MySQL JDBC driver NOT found on classpath.");
+            e.printStackTrace();
         }
     }
     
