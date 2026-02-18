@@ -5,21 +5,26 @@ import javax.swing.border.*;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.awt.event.*;
+import java.sql.*;
+import javax.swing.plaf.basic.BasicButtonUI;
 
+/**
+ * Gestion des Patients — connectée à la base de données via PatientDAO.
+ * Corrections : champ numeroNational (était numNational)
+ */
 public class PatientPage extends JFrame implements ActionListener {
 
-    // ================== Components ==================
-    JTextField txtSearch, txtNum, txtNom, txtPrenom, txtDateNaissance, txtSexe, txtAdresse, txtTelephone, txtEmail, txtGroupeSanguin, txtNumNational, txtContactUrgence, txtAntecedents;
-    JButton btnSearch, btnAdd, btnUpdate, btnRemove;
-    JTable patientTable;
+    JTextField txtSearch, txtNum, txtNom, txtPrenom, txtDateNaissance,
+               txtSexe, txtAdresse, txtTelephone, txtEmail,
+               txtGroupeSanguin, txtNumeroNational, txtContactUrgence;
+    JTextArea  txtAntecedents;
+    JButton    btnSearch, btnAdd, btnUpdate, btnRemove, btnRefresh, btnClear;
+    JTable     patientTable;
     DefaultTableModel tableModel;
 
-    int autoNumPatient = 1; // simulate AUTO_INCREMENT
-
-    // ================== Constructor ==================
     public PatientPage(String username, String role) {
         setTitle("Gestion des Patients - Système de Gestion Hospitalière");
-        setSize(1300, 750);
+        setSize(1300, 780);
         setLocationRelativeTo(null);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setLayout(new BorderLayout());
@@ -27,140 +32,156 @@ public class PatientPage extends JFrame implements ActionListener {
         getContentPane().setBackground(new Color(240, 242, 245));
 
         add(createHeaderPanel(username, role), BorderLayout.NORTH);
-        add(createMainPanel(), BorderLayout.CENTER);
+        add(createMainPanel(),                 BorderLayout.CENTER);
 
         setVisible(true);
+        loadPatients();
     }
 
-    // ================== HEADER ==================
     private JPanel createHeaderPanel(String username, String role) {
         JPanel header = new JPanel(null);
         header.setPreferredSize(new Dimension(1300, 100));
         header.setBackground(new Color(41, 128, 185));
 
-        JLabel titleLabel = new JLabel("Gestion des Patients");
-        titleLabel.setBounds(50, 30, 400, 40);
-        titleLabel.setFont(new Font("Segoe UI", Font.BOLD, 28));
-        titleLabel.setForeground(Color.WHITE);
-        header.add(titleLabel);
+        JLabel title = new JLabel("👥 Gestion des Patients");
+        title.setBounds(50, 30, 500, 40);
+        title.setFont(new Font("Segoe UI", Font.BOLD, 28));
+        title.setForeground(Color.WHITE);
+        header.add(title);
 
-        JLabel userLabel = new JLabel("Utilisateur: " + username + " | Rôle: " + role);
-        userLabel.setBounds(900, 35, 350, 25);
-        userLabel.setFont(new Font("Segoe UI", Font.PLAIN, 16));
-        userLabel.setForeground(Color.WHITE);
-        header.add(userLabel);
+        JLabel user = new JLabel("Utilisateur: " + username + " | Rôle: " + role);
+        user.setBounds(900, 35, 380, 25);
+        user.setFont(new Font("Segoe UI", Font.PLAIN, 15));
+        user.setForeground(Color.WHITE);
+        header.add(user);
 
         return header;
     }
 
-    // ================== MAIN ==================
     private JPanel createMainPanel() {
         JPanel main = new JPanel(null);
         main.setBackground(new Color(240, 242, 245));
 
-        // ---------- SEARCH PANEL ----------
-        JPanel searchPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 15, 5));
-        searchPanel.setBounds(30, 20, 1220, 70);
+        // ---- SEARCH BAR ----
+        JPanel searchPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 15, 8));
+        searchPanel.setBounds(30, 15, 1230, 60);
         searchPanel.setBackground(Color.WHITE);
         searchPanel.setBorder(BorderFactory.createTitledBorder(
-                BorderFactory.createLineBorder(new Color(189, 195, 199)),
-                "Rechercher Patient"
-        ));
+                BorderFactory.createLineBorder(new Color(189, 195, 199)), "Rechercher Patient"));
 
-        txtSearch = new JTextField(30);
-        btnSearch = new JButton("🔍 Rechercher");
-        stylePrimaryButton(btnSearch);
+        txtSearch  = new JTextField(30);
+        txtSearch.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        btnSearch  = makeBtn("🔍 Rechercher", new Color(41, 128, 185));
+        btnRefresh = makeBtn("🔄 Actualiser", new Color(149, 165, 166));
+        btnClear   = makeBtn("✖ Effacer",     new Color(127, 140, 141));
 
         btnSearch.addActionListener(this);
+        btnRefresh.addActionListener(this);
+        btnClear.addActionListener(this);
+
+        searchPanel.add(new JLabel("Nom / Téléphone / ID :"));
         searchPanel.add(txtSearch);
         searchPanel.add(btnSearch);
-
+        searchPanel.add(btnRefresh);
+        searchPanel.add(btnClear);
         main.add(searchPanel);
 
-        // ---------- INFO PANEL ----------
-        JPanel infoPanel = new JPanel(new GridLayout(13, 2, 10, 10));
-        infoPanel.setBounds(30, 110, 550, 520);
-        infoPanel.setBackground(Color.WHITE);
-        infoPanel.setBorder(BorderFactory.createTitledBorder(
-                BorderFactory.createLineBorder(new Color(189, 195, 199)),
-                "Informations Patient"
-        ));
+        // ---- FORM PANEL ----
+        JPanel formPanel = new JPanel(null);
+        formPanel.setBounds(30, 90, 550, 610);
+        formPanel.setBackground(Color.WHITE);
+        formPanel.setBorder(BorderFactory.createTitledBorder(
+                BorderFactory.createLineBorder(new Color(189, 195, 199)), "Informations Patient"));
 
-        txtNum = new JTextField();
-        txtNum.setEditable(false);
-        txtNum.setBackground(new Color(230, 230, 230));
+        String[] labels = {
+            "Num Patient", "Nom *", "Prénom *",
+            "Date Naissance (AAAA-MM-JJ)", "Sexe (M/F)",
+            "Adresse", "Téléphone", "Email",
+            "Groupe Sanguin", "Numéro National", "Contact Urgence"
+        };
 
-        txtNom = new JTextField();
-        txtPrenom = new JTextField();
-        txtDateNaissance = new JTextField();
-        txtSexe = new JTextField();
-        txtAdresse = new JTextField();
-        txtTelephone = new JTextField();
-        txtEmail = new JTextField();
-        txtGroupeSanguin = new JTextField();
-        txtNumNational = new JTextField();
-        txtContactUrgence = new JTextField();
-        txtAntecedents = new JTextField();
+        txtNum             = makeField(true);
+        txtNom             = makeField(false);
+        txtPrenom          = makeField(false);
+        txtDateNaissance   = makeField(false);
+        txtSexe            = makeField(false);
+        txtAdresse         = makeField(false);
+        txtTelephone       = makeField(false);
+        txtEmail           = makeField(false);
+        txtGroupeSanguin   = makeField(false);
+        txtNumeroNational  = makeField(false);   // ✅ corrigé
+        txtContactUrgence  = makeField(false);
 
-        infoPanel.add(new JLabel("Num Patient:"));
-        infoPanel.add(txtNum);
-        infoPanel.add(new JLabel("Nom:"));
-        infoPanel.add(txtNom);
-        infoPanel.add(new JLabel("Prénom:"));
-        infoPanel.add(txtPrenom);
-        infoPanel.add(new JLabel("Date de Naissance:"));
-        infoPanel.add(txtDateNaissance);
-        infoPanel.add(new JLabel("Sexe (M/F):"));
-        infoPanel.add(txtSexe);
-        infoPanel.add(new JLabel("Adresse:"));
-        infoPanel.add(txtAdresse);
-        infoPanel.add(new JLabel("Téléphone:"));
-        infoPanel.add(txtTelephone);
-        infoPanel.add(new JLabel("Email:"));
-        infoPanel.add(txtEmail);
-        infoPanel.add(new JLabel("Groupe Sanguin:"));
-        infoPanel.add(txtGroupeSanguin);
-        infoPanel.add(new JLabel("Numéro National:"));
-        infoPanel.add(txtNumNational);
-        infoPanel.add(new JLabel("Contact Urgence:"));
-        infoPanel.add(txtContactUrgence);
-        infoPanel.add(new JLabel("Antécédents Médicaux:"));
-        infoPanel.add(txtAntecedents);
+        JTextField[] fields = {
+            txtNum, txtNom, txtPrenom, txtDateNaissance, txtSexe,
+            txtAdresse, txtTelephone, txtEmail,
+            txtGroupeSanguin, txtNumeroNational, txtContactUrgence
+        };
 
-        main.add(infoPanel);
+        int y = 25;
+        for (int i = 0; i < labels.length; i++) {
+            JLabel lbl = new JLabel(labels[i] + ":");
+            lbl.setBounds(15, y, 200, 22);
+            lbl.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            formPanel.add(lbl);
+            fields[i].setBounds(220, y, 310, 25);
+            formPanel.add(fields[i]);
+            y += 38;
+        }
 
-        // ---------- TABLE PANEL ----------
+        JLabel lblAnt = new JLabel("Antécédents Médicaux:");
+        lblAnt.setBounds(15, y, 200, 22);
+        lblAnt.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        formPanel.add(lblAnt);
+
+        txtAntecedents = new JTextArea(3, 20);
+        txtAntecedents.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        txtAntecedents.setLineWrap(true);
+        txtAntecedents.setWrapStyleWord(true);
+        JScrollPane spAnt = new JScrollPane(txtAntecedents);
+        spAnt.setBounds(220, y, 310, 65);
+        formPanel.add(spAnt);
+
+        main.add(formPanel);
+
+        // ---- TABLE PANEL ----
         JPanel tablePanel = new JPanel(new BorderLayout());
-        tablePanel.setBounds(600, 110, 650, 520);
+        tablePanel.setBounds(600, 90, 660, 610);
         tablePanel.setBackground(Color.WHITE);
         tablePanel.setBorder(BorderFactory.createTitledBorder(
-                BorderFactory.createLineBorder(new Color(189, 195, 199)),
-                "Liste des Patients"
-        ));
+                BorderFactory.createLineBorder(new Color(189, 195, 199)), "Liste des Patients"));
 
-        tableModel = new DefaultTableModel(
-                new Object[]{
-                        "Num", "Nom", "Prénom", "Date Naissance", "Sexe", "Adresse", "Téléphone", "Email", 
-                        "Groupe Sanguin", "Numéro National", "Contact Urgence", "Antécédents"
-                }, 0
-        );
+        String[] cols = {
+            "ID", "Nom", "Prénom", "Naissance", "Sexe",
+            "Téléphone", "Email", "Groupe Sanguin", "N° National"
+        };
+        tableModel = new DefaultTableModel(cols, 0) {
+            @Override public boolean isCellEditable(int r, int c) { return false; }
+        };
         patientTable = new JTable(tableModel);
-        patientTable.setRowHeight(28);
-        patientTable.setDefaultEditor(Object.class, null);
+        patientTable.setRowHeight(26);
+        patientTable.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        patientTable.getTableHeader().setFont(new Font("Segoe UI", Font.BOLD, 13));
+        patientTable.getTableHeader().setBackground(new Color(52, 73, 94));
+        patientTable.getTableHeader().setForeground(Color.WHITE);
+        patientTable.setSelectionBackground(new Color(52, 152, 219));
+        patientTable.setSelectionForeground(Color.WHITE);
+        patientTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
 
-        JScrollPane scrollPane = new JScrollPane(patientTable);
-        tablePanel.add(scrollPane, BorderLayout.CENTER);
+        patientTable.addMouseListener(new MouseAdapter() {
+            @Override public void mouseClicked(MouseEvent e) {
+                int row = patientTable.getSelectedRow();
+                if (row >= 0) loadRowToForm(row);
+            }
+        });
 
-        JPanel btnPanel = new JPanel();
+        tablePanel.add(new JScrollPane(patientTable), BorderLayout.CENTER);
+
+        JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 8));
         btnPanel.setBackground(Color.WHITE);
-
-        btnAdd = new JButton("Ajouter");
-        btnUpdate = new JButton("Modifier");
-        btnRemove = new JButton("Supprimer");
-
-        styleSuccessButton(btnAdd);
-        stylePrimaryButton(btnUpdate);
-        styleDangerButton(btnRemove);
+        btnAdd    = makeBtn("➕ Ajouter",   new Color(46, 204, 113));
+        btnUpdate = makeBtn("✏ Modifier",   new Color(52, 152, 219));
+        btnRemove = makeBtn("🗑 Supprimer", new Color(192, 57, 43));
 
         btnAdd.addActionListener(this);
         btnUpdate.addActionListener(this);
@@ -169,82 +190,214 @@ public class PatientPage extends JFrame implements ActionListener {
         btnPanel.add(btnAdd);
         btnPanel.add(btnUpdate);
         btnPanel.add(btnRemove);
-
         tablePanel.add(btnPanel, BorderLayout.SOUTH);
-        main.add(tablePanel);
 
+        main.add(tablePanel);
         return main;
     }
 
-    // ================== BUTTON STYLES ==================
-    private void stylePrimaryButton(JButton btn) {
-        btn.setBackground(new Color(41, 128, 185));
-        btn.setForeground(Color.BLACK);
-        btn.setFocusPainted(false);
-    }
+    // ==================== DATA ====================
 
-    private void styleSuccessButton(JButton btn) {
-        btn.setBackground(new Color(46, 204, 113));
-        btn.setForeground(Color.BLACK);
-        btn.setFocusPainted(false);
-    }
-
-    private void styleDangerButton(JButton btn) {
-        btn.setBackground(new Color(192, 57, 43));
-        btn.setForeground(Color.BLACK);
-        btn.setFocusPainted(false);
-    }
-
-    // ================== ACTIONS ==================
-    @Override
-    public void actionPerformed(ActionEvent e) {
-
-        if (e.getSource() == btnAdd) {
-            txtNum.setText(String.valueOf(autoNumPatient++));
-
-            tableModel.addRow(new Object[]{
-                    txtNum.getText(),
-                    txtNom.getText(),
-                    txtPrenom.getText(),
-                    txtDateNaissance.getText(),
-                    txtSexe.getText(),
-                    txtAdresse.getText(),
-                    txtTelephone.getText(),
-                    txtEmail.getText(),
-                    txtGroupeSanguin.getText(),
-                    txtNumNational.getText(),
-                    txtContactUrgence.getText(),
-                    txtAntecedents.getText()
-            });
-
-        } else if (e.getSource() == btnUpdate) {
-            int row = patientTable.getSelectedRow();
-            if (row >= 0) {
-                tableModel.setValueAt(txtNom.getText(), row, 1);
-                tableModel.setValueAt(txtPrenom.getText(), row, 2);
-                tableModel.setValueAt(txtDateNaissance.getText(), row, 3);
-                tableModel.setValueAt(txtSexe.getText(), row, 4);
-                tableModel.setValueAt(txtAdresse.getText(), row, 5);
-                tableModel.setValueAt(txtTelephone.getText(), row, 6);
-                tableModel.setValueAt(txtEmail.getText(), row, 7);
-                tableModel.setValueAt(txtGroupeSanguin.getText(), row, 8);
-                tableModel.setValueAt(txtNumNational.getText(), row, 9);
-                tableModel.setValueAt(txtContactUrgence.getText(), row, 10);
-                tableModel.setValueAt(txtAntecedents.getText(), row, 11);
-            } else {
-                JOptionPane.showMessageDialog(this, "Sélectionnez un patient.");
+    private void loadPatients() {
+        tableModel.setRowCount(0);
+        try {
+            for (PatientDAO.Patient p : PatientDAO.getAllPatients()) {
+                tableModel.addRow(new Object[]{
+                    p.numPatient, p.nom, p.prenom,
+                    nvl(p.dateNaissance), nvl(p.sexe),
+                    nvl(p.telephone), nvl(p.email),
+                    nvl(p.groupeSanguin),
+                    nvl(p.numeroNational)     // ✅ corrigé
+                });
             }
-
-        } else if (e.getSource() == btnRemove) {
-            int row = patientTable.getSelectedRow();
-            if (row >= 0) tableModel.removeRow(row);
-
-        } else if (e.getSource() == btnSearch) {
-            JOptionPane.showMessageDialog(this, "Recherche simulée (à connecter à la base de données).");
+        } catch (SQLException ex) {
+            showError("Erreur chargement patients : " + ex.getMessage());
         }
     }
 
-    // ================== MAIN ==================
+    private void searchPatients() {
+        String term = txtSearch.getText().trim();
+        if (term.isEmpty()) { loadPatients(); return; }
+        tableModel.setRowCount(0);
+        try {
+            for (PatientDAO.Patient p : PatientDAO.searchPatients(term)) {
+                tableModel.addRow(new Object[]{
+                    p.numPatient, p.nom, p.prenom,
+                    nvl(p.dateNaissance), nvl(p.sexe),
+                    nvl(p.telephone), nvl(p.email),
+                    nvl(p.groupeSanguin),
+                    nvl(p.numeroNational)     // ✅ corrigé
+                });
+            }
+            if (tableModel.getRowCount() == 0)
+                JOptionPane.showMessageDialog(this, "Aucun patient trouvé pour : " + term);
+        } catch (SQLException ex) {
+            showError("Erreur recherche : " + ex.getMessage());
+        }
+    }
+
+    private void loadRowToForm(int row) {
+        txtNum.setText(tableModel.getValueAt(row, 0).toString());
+        txtNom.setText(val(row, 1));
+        txtPrenom.setText(val(row, 2));
+        txtDateNaissance.setText(val(row, 3));
+        txtSexe.setText(val(row, 4));
+        txtTelephone.setText(val(row, 5));
+        txtEmail.setText(val(row, 6));
+        txtGroupeSanguin.setText(val(row, 7));
+        txtNumeroNational.setText(val(row, 8));  // ✅ corrigé
+
+        // Charger adresse, contact urgence, antécédents depuis la DB
+        try {
+            int id = Integer.parseInt(tableModel.getValueAt(row, 0).toString());
+            PatientDAO.Patient p = PatientDAO.getPatientById(id);
+            if (p != null) {
+                txtAdresse.setText(nvl(p.adresse));
+                txtContactUrgence.setText(nvl(p.contactUrgence));
+                txtAntecedents.setText(nvl(p.antecedents));
+            }
+        } catch (SQLException ex) {
+            showError("Erreur chargement détails : " + ex.getMessage());
+        }
+    }
+
+    // ==================== ACTIONS ====================
+
+    @Override
+    public void actionPerformed(ActionEvent e) {
+
+        if (e.getSource() == btnSearch)  { searchPatients(); return; }
+        if (e.getSource() == btnRefresh) { loadPatients(); clearForm(); txtSearch.setText(""); return; }
+        if (e.getSource() == btnClear)   { clearForm(); return; }
+
+        if (e.getSource() == btnAdd) {
+            if (txtNom.getText().trim().isEmpty() || txtPrenom.getText().trim().isEmpty()) {
+                JOptionPane.showMessageDialog(this, "Le Nom et le Prénom sont obligatoires.",
+                        "Champs manquants", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            try {
+                int newId = PatientDAO.addPatient(buildFromForm());
+                if (newId > 0) {
+                    JOptionPane.showMessageDialog(this, "✅ Patient ajouté (ID : " + newId + ")");
+                    clearForm();
+                    loadPatients();
+                }
+            } catch (SQLException ex) {
+                showError("Erreur ajout : " + ex.getMessage());
+            }
+        }
+
+        else if (e.getSource() == btnUpdate) {
+            if (txtNum.getText().trim().isEmpty()) {
+                JOptionPane.showMessageDialog(this, "Sélectionnez un patient dans la liste.",
+                        "Attention", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            try {
+                PatientDAO.Patient p = buildFromForm();
+                p.numPatient = Integer.parseInt(txtNum.getText().trim());
+                if (PatientDAO.updatePatient(p)) {
+                    JOptionPane.showMessageDialog(this, "✅ Patient modifié.");
+                    clearForm();
+                    loadPatients();
+                }
+            } catch (SQLException ex) {
+                showError("Erreur modification : " + ex.getMessage());
+            }
+        }
+
+        else if (e.getSource() == btnRemove) {
+            int row = patientTable.getSelectedRow();
+            if (row < 0) {
+                JOptionPane.showMessageDialog(this, "Sélectionnez un patient à supprimer.",
+                        "Attention", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            int id  = Integer.parseInt(tableModel.getValueAt(row, 0).toString());
+            String nom = tableModel.getValueAt(row, 1) + " " + tableModel.getValueAt(row, 2);
+            int confirm = JOptionPane.showConfirmDialog(this,
+                    "Supprimer le patient : " + nom + " ?",
+                    "Confirmation", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+            if (confirm == JOptionPane.YES_OPTION) {
+                try {
+                    if (PatientDAO.deletePatient(id)) {
+                        JOptionPane.showMessageDialog(this, "✅ Patient supprimé.");
+                        clearForm();
+                        loadPatients();
+                    }
+                } catch (SQLException ex) {
+                    if ("23000".equals(ex.getSQLState()))
+                        showError("Impossible de supprimer : ce patient a des admissions liées.");
+                    else
+                        showError("Erreur suppression : " + ex.getMessage());
+                }
+            }
+        }
+    }
+
+    // ==================== HELPERS ====================
+
+    private PatientDAO.Patient buildFromForm() {
+        PatientDAO.Patient p = new PatientDAO.Patient();
+        p.nom            = txtNom.getText().trim();
+        p.prenom         = txtPrenom.getText().trim();
+        p.dateNaissance  = txtDateNaissance.getText().trim();
+        p.sexe           = txtSexe.getText().trim().toUpperCase();
+        p.adresse        = txtAdresse.getText().trim();
+        p.telephone      = txtTelephone.getText().trim();
+        p.email          = txtEmail.getText().trim();
+        p.groupeSanguin  = txtGroupeSanguin.getText().trim();
+        p.numeroNational = txtNumeroNational.getText().trim();  // ✅ corrigé
+        p.contactUrgence = txtContactUrgence.getText().trim();
+        p.antecedents    = txtAntecedents.getText().trim();
+        return p;
+    }
+
+    private void clearForm() {
+        for (JTextField f : new JTextField[]{
+            txtNum, txtNom, txtPrenom, txtDateNaissance, txtSexe,
+            txtAdresse, txtTelephone, txtEmail,
+            txtGroupeSanguin, txtNumeroNational, txtContactUrgence
+        }) f.setText("");
+        txtAntecedents.setText("");
+        patientTable.clearSelection();
+    }
+
+    private JTextField makeField(boolean readOnly) {
+        JTextField f = new JTextField();
+        f.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        if (readOnly) {
+            f.setEditable(false);
+            f.setBackground(new Color(230, 230, 230));
+        }
+        return f;
+    }
+
+    private JButton makeBtn(String label, Color bg) {
+        JButton btn = new JButton(label);
+        btn.setUI(new BasicButtonUI());
+        btn.setBackground(bg);
+        btn.setForeground(Color.WHITE);
+        btn.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        btn.setFocusPainted(false);
+        btn.setOpaque(true);
+        btn.setContentAreaFilled(true);
+        btn.setBorderPainted(false);
+        btn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        btn.setBorder(BorderFactory.createEmptyBorder(6, 14, 6, 14));
+        return btn;
+    }
+
+    private String nvl(String s) { return s != null ? s : ""; }
+    private String val(int row, int col) {
+        Object v = tableModel.getValueAt(row, col);
+        return v != null ? v.toString() : "";
+    }
+    private void showError(String msg) {
+        JOptionPane.showMessageDialog(this, msg, "Erreur", JOptionPane.ERROR_MESSAGE);
+    }
+
     public static void main(String[] args) {
         try { UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()); }
         catch (Exception e) { e.printStackTrace(); }
