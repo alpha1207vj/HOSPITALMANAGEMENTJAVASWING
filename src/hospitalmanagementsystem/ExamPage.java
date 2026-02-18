@@ -237,7 +237,8 @@ public class ExamPage extends JFrame implements ActionListener {
 
         // ---------- Exam Table Panel ----------
         JPanel tablePanel = new JPanel();
-        tablePanel.setBounds(30, 240, 1120, 400);
+        // Hauteur réduite pour laisser bien voir les boutons comme dans MedecinPage
+        tablePanel.setBounds(30, 240, 1120, 320);
         tablePanel.setBackground(Color.WHITE);
         tablePanel.setBorder(BorderFactory.createTitledBorder(
                 BorderFactory.createLineBorder(new Color(189, 195, 199), 1),
@@ -298,7 +299,8 @@ public class ExamPage extends JFrame implements ActionListener {
 
         // ---------- Result Panel ----------
         JPanel resultPanel = new JPanel();
-        resultPanel.setBounds(30, 650, 1120, 80);
+        // Remonté pour rester visible sous le tableau et ses boutons
+        resultPanel.setBounds(30, 580, 1120, 80);
         resultPanel.setBackground(Color.WHITE);
         resultPanel.setBorder(BorderFactory.createTitledBorder(
                 BorderFactory.createLineBorder(new Color(189, 195, 199), 1),

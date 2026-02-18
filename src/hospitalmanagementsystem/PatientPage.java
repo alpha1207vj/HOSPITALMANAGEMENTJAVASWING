@@ -3,6 +3,7 @@ package hospitalmanagementsystem;
 import javax.swing.*;
 import javax.swing.border.*;
 import javax.swing.table.DefaultTableModel;
+import javax.swing.table.JTableHeader;
 import java.awt.*;
 import java.awt.event.*;
 import java.sql.*;
@@ -146,7 +147,8 @@ public class PatientPage extends JFrame implements ActionListener {
 
         // ---- TABLE PANEL ----
         JPanel tablePanel = new JPanel(new BorderLayout());
-        tablePanel.setBounds(600, 90, 660, 610);
+        // Hauteur réduite pour laisser la place aux boutons comme dans MedecinPage
+        tablePanel.setBounds(600, 110, 660, 420);
         tablePanel.setBackground(Color.WHITE);
         tablePanel.setBorder(BorderFactory.createTitledBorder(
                 BorderFactory.createLineBorder(new Color(189, 195, 199)), "Liste des Patients"));
@@ -161,9 +163,13 @@ public class PatientPage extends JFrame implements ActionListener {
         patientTable = new JTable(tableModel);
         patientTable.setRowHeight(26);
         patientTable.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-        patientTable.getTableHeader().setFont(new Font("Segoe UI", Font.BOLD, 13));
-        patientTable.getTableHeader().setBackground(new Color(52, 73, 94));
-        patientTable.getTableHeader().setForeground(Color.WHITE);
+
+        JTableHeader header = patientTable.getTableHeader();
+        header.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        header.setOpaque(true);
+        header.setBackground(new Color(236, 240, 241));      // gris clair
+        header.setForeground(new Color(44, 62, 80));         // texte foncé
+
         patientTable.setSelectionBackground(new Color(52, 152, 219));
         patientTable.setSelectionForeground(Color.WHITE);
         patientTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
@@ -177,11 +183,14 @@ public class PatientPage extends JFrame implements ActionListener {
 
         tablePanel.add(new JScrollPane(patientTable), BorderLayout.CENTER);
 
+        // ---- CRUD BUTTONS en bas du tableau ----
         JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 8));
         btnPanel.setBackground(Color.WHITE);
-        btnAdd    = makeBtn("➕ Ajouter",   new Color(46, 204, 113));
-        btnUpdate = makeBtn("✏ Modifier",   new Color(52, 152, 219));
-        btnRemove = makeBtn("🗑 Supprimer", new Color(192, 57, 43));
+
+        // Boutons CRUD alignés sur le style de MedecinPage (sans emoji)
+        btnAdd    = makeBtn("Ajouter",   new Color(46, 204, 113));
+        btnUpdate = makeBtn("Modifier",  new Color(52, 152, 219));
+        btnRemove = makeBtn("Supprimer", new Color(192, 57, 43));
 
         btnAdd.addActionListener(this);
         btnUpdate.addActionListener(this);
@@ -190,8 +199,8 @@ public class PatientPage extends JFrame implements ActionListener {
         btnPanel.add(btnAdd);
         btnPanel.add(btnUpdate);
         btnPanel.add(btnRemove);
-        tablePanel.add(btnPanel, BorderLayout.SOUTH);
 
+        tablePanel.add(btnPanel, BorderLayout.SOUTH);
         main.add(tablePanel);
         return main;
     }

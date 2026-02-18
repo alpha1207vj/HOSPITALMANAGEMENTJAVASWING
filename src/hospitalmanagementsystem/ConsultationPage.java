@@ -3,6 +3,7 @@ package hospitalmanagementsystem;
 import javax.swing.*;
 import javax.swing.border.*;
 import javax.swing.table.DefaultTableModel;
+import javax.swing.table.JTableHeader;
 import java.awt.*;
 import java.awt.event.*;
 import java.sql.*;
@@ -197,7 +198,8 @@ public class ConsultationPage extends JFrame implements ActionListener {
 
         // ---- TABLE PANEL ----
         JPanel tablePanel = new JPanel(new BorderLayout());
-        tablePanel.setBounds(600, 72, 660, 615);
+        // Hauteur réduite pour laisser la place aux boutons comme les autres pages
+        tablePanel.setBounds(600, 110, 660, 420);
         tablePanel.setBackground(Color.WHITE);
         tablePanel.setBorder(BorderFactory.createTitledBorder(
                 BorderFactory.createLineBorder(new Color(189, 195, 199)), "Liste des Consultations"));
@@ -209,9 +211,13 @@ public class ConsultationPage extends JFrame implements ActionListener {
         consultationTable = new JTable(tableModel);
         consultationTable.setRowHeight(26);
         consultationTable.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-        consultationTable.getTableHeader().setFont(new Font("Segoe UI", Font.BOLD, 13));
-        consultationTable.getTableHeader().setBackground(new Color(52, 73, 94));
-        consultationTable.getTableHeader().setForeground(Color.WHITE);
+
+        JTableHeader header = consultationTable.getTableHeader();
+        header.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        header.setOpaque(true);
+        // Fond clair + texte foncé, comme sur la page Patients
+        header.setBackground(new Color(236, 240, 241));
+        header.setForeground(new Color(44, 62, 80));
         consultationTable.setSelectionBackground(new Color(52, 152, 219));
         consultationTable.setSelectionForeground(Color.WHITE);
         consultationTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
@@ -227,11 +233,12 @@ public class ConsultationPage extends JFrame implements ActionListener {
 
         JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 8));
         btnPanel.setBackground(Color.WHITE);
-        btnAdd    = makeBtn("➕ Ajouter",   new Color(46, 204, 113));
-        btnUpdate = makeBtn("✏ Modifier",   new Color(52, 152, 219));
-        btnDelete = makeBtn("🗑 Supprimer", new Color(192, 57, 43));
-        btnClear  = makeBtn("✖ Effacer",   new Color(127, 140, 141));
-        btnCancel = makeBtn("❌ Fermer",    new Color(52, 73, 94));
+        // Boutons en texte simple, comme sur la page Médecins
+        btnAdd    = makeBtn("Ajouter",   new Color(46, 204, 113));
+        btnUpdate = makeBtn("Modifier",  new Color(52, 152, 219));
+        btnDelete = makeBtn("Supprimer", new Color(192, 57, 43));
+        btnClear  = makeBtn("Effacer",   new Color(127, 140, 141));
+        btnCancel = makeBtn("Fermer",    new Color(52, 73, 94));
 
         for (JButton b : new JButton[]{btnAdd, btnUpdate, btnDelete, btnClear, btnCancel})
             b.addActionListener(this);
