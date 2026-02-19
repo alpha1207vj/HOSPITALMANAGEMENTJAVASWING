@@ -253,14 +253,10 @@ public class MainDashboard extends JFrame implements ActionListener {
             new HospitalizationPage();
         }
         else if (e.getSource() == btnAdmission) {
-            JOptionPane.showMessageDialog(this,
-                    "Module Admissions en cours de développement...",
-                    "Information", JOptionPane.INFORMATION_MESSAGE);
+              new AdmissionPage(username, userRole);
         }
         else if (e.getSource() == btnBilling) {
-            JOptionPane.showMessageDialog(this,
-                    "Module Facturation en cours de développement...",
-                    "Information", JOptionPane.INFORMATION_MESSAGE);
+           new FacturationPage();
         }
         else if (e.getSource() == btnSettings) {
             JOptionPane.showMessageDialog(this,

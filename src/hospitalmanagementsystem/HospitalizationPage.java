@@ -4,48 +4,33 @@ import javax.swing.*;
 import javax.swing.table.*;
 import java.awt.*;
 import java.awt.event.*;
+import java.sql.*;
 import java.util.*;
 import java.util.List;
+import static javax.swing.WindowConstants.DISPOSE_ON_CLOSE;
 
 public class HospitalizationPage extends JFrame {
-    
-    // Dummy data structures
-    private Map<String, Map<String, List<Bed>>> hospitalData = new LinkedHashMap<>();
-    
-    // Main components
-    private JComboBox<String> pavillonCombo;
-    private JComboBox<String> chambreCombo;
-    private JPanel bedGridPanel;
-    private JTable activeHospitalizationsTable;
+
+    // ── DB-backed data ──────────────────────────────────────
+    // pavillonId → pavillonName
+    private final Map<Integer, String> pavillonMap = new LinkedHashMap<>();
+    // chambreId  → chambreLabel  (for the currently selected pavillon)
+    private final Map<Integer, String> chambreMap  = new LinkedHashMap<>();
+
+    // ── UI ──────────────────────────────────────────────────
+    private JComboBox<String> pavillonCombo, chambreCombo;
+    private JPanel            bedGridPanel;
+    private JTable            activeTable;
     private DefaultTableModel tableModel;
-    
-    // Stats labels
-    private JLabel totalBedsLabel;
-    private JLabel occupiedBedsLabel;
-    private JLabel freeBedsLabel;
-    private JLabel occupancyRateLabel;
-    
-    // Bed class
-    private static class Bed {
-        int id;
-        String number;
-        boolean occupied;
-        String patientName;
-        String dateEntree;
-        int daysHospitalized;
-        String status; // "libre", "occupé", "maintenance", "réservé"
-        
-        Bed(int id, String number) {
-            this.id = id;
-            this.number = number;
-            this.occupied = false;
-            this.patientName = "";
-            this.dateEntree = "";
-            this.daysHospitalized = 0;
-            this.status = "libre";
-        }
-    }
-    
+
+    // Stat labels (set via createStatCard)
+    private JLabel lblTotalBeds, lblOccupied, lblFree, lblRate;
+
+    // ── Combo index → DB id helpers ─────────────────────────
+    private final List<Integer> pavillonIds = new ArrayList<>();
+    private final List<Integer> chambreIds  = new ArrayList<>();
+
+    // ============================================================
     public HospitalizationPage() {
         setTitle("Gestion des Hospitalisations");
         setSize(1400, 850);
@@ -53,930 +38,830 @@ public class HospitalizationPage extends JFrame {
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setLayout(new BorderLayout(0, 0));
         getContentPane().setBackground(new Color(240, 242, 245));
-        
-        initDummyData();
+
         initComponents();
         loadData();
-        
         setVisible(true);
     }
-    
-    // ==================== INIT DUMMY DATA ====================
-    private void initDummyData() {
-        Random rand = new Random();
-        String[] firstNames = {"Jean", "Marie", "Pierre", "Sophie", "Luc", "Anne", "Paul", "Claire", "Marc", "Julie"};
-        String[] lastNames = {"Dupont", "Martin", "Bernard", "Dubois", "Thomas", "Robert", "Petit", "Richard", "Durand", "Leroy"};
-        
-        int bedCounter = 1;
-        
-        // Create 3 pavillons
-        for (int p = 1; p <= 3; p++) {
-            String pavillonName = "Pavillon " + (char)('A' + p - 1);
-            Map<String, List<Bed>> chambres = new LinkedHashMap<>();
-            
-            // Create 5 chambres per pavillon
-            for (int c = 1; c <= 5; c++) {
-                String chambreName = "Chambre " + (100 + c);
-                List<Bed> beds = new ArrayList<>();
-                
-                // Create 3 beds per chambre
-                for (int b = 1; b <= 3; b++) {
-                    Bed bed = new Bed(bedCounter++, "Lit " + (char)('A' + b - 1));
-                    
-                    // Randomly occupy some beds (60% occupancy)
-                    int randomStatus = rand.nextInt(100);
-                    if (randomStatus < 60) {
-                        bed.occupied = true;
-                        bed.status = "occupé";
-                        bed.patientName = firstNames[rand.nextInt(firstNames.length)] + " " + 
-                                         lastNames[rand.nextInt(lastNames.length)];
-                        bed.daysHospitalized = rand.nextInt(10) + 1;
-                        
-                        // Generate random date
-                        Calendar cal = Calendar.getInstance();
-                        cal.add(Calendar.DAY_OF_MONTH, -bed.daysHospitalized);
-                        bed.dateEntree = String.format("%02d/%02d/%04d", 
-                            cal.get(Calendar.DAY_OF_MONTH),
-                            cal.get(Calendar.MONTH) + 1,
-                            cal.get(Calendar.YEAR));
-                    } else if (randomStatus < 70) {
-                        bed.status = "maintenance";
-                    } else if (randomStatus < 75) {
-                        bed.status = "réservé";
-                    }
-                    
-                    beds.add(bed);
-                }
-                
-                chambres.put(chambreName, beds);
-            }
-            
-            hospitalData.put(pavillonName, chambres);
-        }
-    }
-    
-    // ==================== INIT COMPONENTS ====================
+
+    // ============================================================
+    // UI CONSTRUCTION (unchanged structure, same look)
+    // ============================================================
     private void initComponents() {
-        // Header
-        add(createHeader(), BorderLayout.NORTH);
-        
-        // Main content (split)
-        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
-        splitPane.setDividerLocation(900);
-        splitPane.setDividerSize(2);
-        splitPane.setBorder(null);
-        
-        // Left side: Bed map
-        splitPane.setLeftComponent(createBedMapPanel());
-        
-        // Right side: Active hospitalizations list
-        splitPane.setRightComponent(createActiveListPanel());
-        
-        add(splitPane, BorderLayout.CENTER);
-        
-        // Footer
+        add(createHeader(),  BorderLayout.NORTH);
+
+        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
+        split.setDividerLocation(900);
+        split.setDividerSize(2);
+        split.setBorder(null);
+        split.setLeftComponent(createBedMapPanel());
+        split.setRightComponent(createActiveListPanel());
+        add(split, BorderLayout.CENTER);
+
         add(createFooter(), BorderLayout.SOUTH);
     }
-    
-    // ==================== HEADER ====================
+
+    // ── HEADER ──────────────────────────────────────────────
     private JPanel createHeader() {
-        JPanel header = new JPanel();
-        header.setLayout(null);
-        header.setPreferredSize(new Dimension(1400, 120));
-        header.setBackground(new Color(41, 128, 185));
-        
-        // Title
-        JLabel titleLabel = new JLabel("🛏️ Gestion des Hospitalisations");
-        titleLabel.setBounds(40, 20, 600, 40);
-        titleLabel.setFont(new Font("Segoe UI", Font.BOLD, 32));
-        titleLabel.setForeground(Color.WHITE);
-        header.add(titleLabel);
-        
-        JLabel subtitleLabel = new JLabel("Vue d'ensemble des lits et patients hospitalisés");
-        subtitleLabel.setBounds(40, 65, 500, 25);
-        subtitleLabel.setFont(new Font("Segoe UI", Font.PLAIN, 16));
-        subtitleLabel.setForeground(new Color(236, 240, 241));
-        header.add(subtitleLabel);
-        
-        // Statistics cards
-        int cardX = 700;
-        
-        JPanel totalCard = createStatCard("Total Lits", "0", new Color(52, 152, 219));
-        totalCard.setBounds(cardX, 20, 150, 80);
-        totalBedsLabel = (JLabel) totalCard.getComponent(1);
-        header.add(totalCard);
-        
-        JPanel occupiedCard = createStatCard("Occupés", "0", new Color(231, 76, 60));
-        occupiedCard.setBounds(cardX + 170, 20, 150, 80);
-        occupiedBedsLabel = (JLabel) occupiedCard.getComponent(1);
-        header.add(occupiedCard);
-        
-        JPanel freeCard = createStatCard("Libres", "0", new Color(46, 204, 113));
-        freeCard.setBounds(cardX + 340, 20, 150, 80);
-        freeBedsLabel = (JLabel) freeCard.getComponent(1);
-        header.add(freeCard);
-        
-        JPanel rateCard = createStatCard("Taux", "0%", new Color(155, 89, 182));
-        rateCard.setBounds(cardX + 510, 20, 150, 80);
-        occupancyRateLabel = (JLabel) rateCard.getComponent(1);
-        header.add(rateCard);
-        
-        return header;
+        JPanel h = new JPanel(null);
+        h.setPreferredSize(new Dimension(1400, 120));
+        h.setBackground(new Color(41, 128, 185));
+
+        JLabel title = new JLabel("🛏️ Gestion des Hospitalisations");
+        title.setBounds(40, 20, 600, 40);
+        title.setFont(new Font("Segoe UI", Font.BOLD, 32));
+        title.setForeground(Color.WHITE);
+        h.add(title);
+
+        JLabel sub = new JLabel("Vue d'ensemble des lits et patients hospitalisés");
+        sub.setBounds(40, 65, 500, 25);
+        sub.setFont(new Font("Segoe UI", Font.PLAIN, 16));
+        sub.setForeground(new Color(236, 240, 241));
+        h.add(sub);
+
+        int x = 700;
+        JPanel c1 = statCard("Total Lits",  "0", new Color(52, 152, 219));  c1.setBounds(x,       20, 150, 80); lblTotalBeds = (JLabel) c1.getComponent(1); h.add(c1);
+        JPanel c2 = statCard("Occupés",     "0", new Color(231,  76,  60)); c2.setBounds(x+170,   20, 150, 80); lblOccupied  = (JLabel) c2.getComponent(1); h.add(c2);
+        JPanel c3 = statCard("Libres",      "0", new Color(46,  204, 113)); c3.setBounds(x+340,   20, 150, 80); lblFree      = (JLabel) c3.getComponent(1); h.add(c3);
+        JPanel c4 = statCard("Taux",        "0%",new Color(155,  89, 182)); c4.setBounds(x+510,   20, 150, 80); lblRate      = (JLabel) c4.getComponent(1); h.add(c4);
+
+        return h;
     }
-    
-    private JPanel createStatCard(String title, String value, Color color) {
-        JPanel card = new JPanel();
-        card.setLayout(null);
-        card.setBackground(color);
-        card.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(new Color(255, 255, 255, 50), 1),
-            BorderFactory.createEmptyBorder(10, 10, 10, 10)
-        ));
-        
-        JLabel titleLabel = new JLabel(title);
-        titleLabel.setBounds(10, 5, 130, 20);
-        titleLabel.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-        titleLabel.setForeground(new Color(255, 255, 255, 200));
-        card.add(titleLabel);
-        
-        JLabel valueLabel = new JLabel(value);
-        valueLabel.setBounds(10, 25, 130, 35);
-        valueLabel.setFont(new Font("Segoe UI", Font.BOLD, 28));
-        valueLabel.setForeground(Color.WHITE);
-        card.add(valueLabel);
-        
-        return card;
+
+    private JPanel statCard(String title, String val, Color col) {
+        JPanel p = new JPanel(null);
+        p.setBackground(col);
+        p.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(new Color(255,255,255,50), 1),
+            BorderFactory.createEmptyBorder(10,10,10,10)));
+
+        JLabel t = new JLabel(title);
+        t.setBounds(10, 5, 130, 20);
+        t.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        t.setForeground(new Color(255,255,255,200));
+        p.add(t);
+
+        JLabel v = new JLabel(val);
+        v.setBounds(10, 25, 130, 35);
+        v.setFont(new Font("Segoe UI", Font.BOLD, 28));
+        v.setForeground(Color.WHITE);
+        p.add(v);
+
+        return p;
     }
-    
-    // ==================== BED MAP PANEL ====================
+
+    // ── BED MAP PANEL ────────────────────────────────────────
     private JPanel createBedMapPanel() {
-        JPanel panel = new JPanel();
-        panel.setLayout(new BorderLayout(10, 10));
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
         panel.setBackground(new Color(240, 242, 245));
         panel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 10));
-        
-        // Filter panel with management buttons
-        JPanel filterPanel = new JPanel();
-        filterPanel.setLayout(null);
+
+        // ---- Filter / action bar ----
+        JPanel filterPanel = new JPanel(null);
         filterPanel.setPreferredSize(new Dimension(880, 120));
         filterPanel.setBackground(Color.WHITE);
         filterPanel.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(new Color(189, 195, 199), 1),
-            BorderFactory.createEmptyBorder(15, 20, 15, 20)
-        ));
-        
-        JLabel filterTitle = new JLabel("📍 Gestion des Emplacements:");
-        filterTitle.setBounds(0, 0, 300, 25);
-        filterTitle.setFont(new Font("Segoe UI", Font.BOLD, 16));
-        filterTitle.setForeground(new Color(44, 62, 80));
-        filterPanel.add(filterTitle);
-        
-        JLabel pavLabel = new JLabel("Pavillon:");
-        pavLabel.setBounds(20, 35, 80, 25);
-        pavLabel.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-        filterPanel.add(pavLabel);
-        
+            BorderFactory.createLineBorder(new Color(189,195,199), 1),
+            BorderFactory.createEmptyBorder(15,20,15,20)));
+
+        JLabel ft = new JLabel("📍 Gestion des Emplacements:");
+        ft.setBounds(0, 0, 300, 25);
+        ft.setFont(new Font("Segoe UI", Font.BOLD, 16));
+        ft.setForeground(new Color(44,62,80));
+        filterPanel.add(ft);
+
+        addLabel(filterPanel, "Pavillon:", 20, 35);
         pavillonCombo = new JComboBox<>();
         pavillonCombo.setBounds(100, 35, 200, 30);
         pavillonCombo.setFont(new Font("Segoe UI", Font.PLAIN, 14));
         pavillonCombo.addActionListener(e -> onPavillonChanged());
         filterPanel.add(pavillonCombo);
-        
-        JLabel chamLabel = new JLabel("Chambre:");
-        chamLabel.setBounds(320, 35, 80, 25);
-        chamLabel.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-        filterPanel.add(chamLabel);
-        
+
+        addLabel(filterPanel, "Chambre:", 320, 35);
         chambreCombo = new JComboBox<>();
         chambreCombo.setBounds(400, 35, 200, 30);
         chambreCombo.setFont(new Font("Segoe UI", Font.PLAIN, 14));
         chambreCombo.addActionListener(e -> loadBedGrid());
         filterPanel.add(chambreCombo);
-        
-        JButton refreshBtn = new JButton("🔄");
-        refreshBtn.setBounds(620, 35, 50, 30);
-        refreshBtn.setFont(new Font("Segoe UI", Font.BOLD, 13));
-        refreshBtn.setBackground(new Color(52, 152, 219));
-        refreshBtn.setForeground(Color.WHITE);
-        refreshBtn.setFocusPainted(false);
-        refreshBtn.setBorderPainted(false);
-        refreshBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
-        refreshBtn.setToolTipText("Actualiser");
-        refreshBtn.addActionListener(e -> loadData());
-        filterPanel.add(refreshBtn);
-        
-        // Management buttons
-        JButton addPavillonBtn = new JButton("➕ Pavillon");
-        addPavillonBtn.setBounds(20, 75, 130, 30);
-        addPavillonBtn.setFont(new Font("Segoe UI", Font.BOLD, 12));
-        addPavillonBtn.setBackground(new Color(46, 204, 113));
-        addPavillonBtn.setForeground(Color.WHITE);
-        addPavillonBtn.setFocusPainted(false);
-        addPavillonBtn.setBorderPainted(false);
-        addPavillonBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
-        addPavillonBtn.addActionListener(e -> addPavillon());
-        filterPanel.add(addPavillonBtn);
-        
-        JButton addChambreBtn = new JButton("➕ Chambre");
-        addChambreBtn.setBounds(160, 75, 130, 30);
-        addChambreBtn.setFont(new Font("Segoe UI", Font.BOLD, 12));
-        addChambreBtn.setBackground(new Color(52, 152, 219));
-        addChambreBtn.setForeground(Color.WHITE);
-        addChambreBtn.setFocusPainted(false);
-        addChambreBtn.setBorderPainted(false);
-        addChambreBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
-        addChambreBtn.addActionListener(e -> addChambre());
-        filterPanel.add(addChambreBtn);
-        
-        JButton addBedBtn = new JButton("➕ Lit");
-        addBedBtn.setBounds(300, 75, 130, 30);
-        addBedBtn.setFont(new Font("Segoe UI", Font.BOLD, 12));
-        addBedBtn.setBackground(new Color(155, 89, 182));
-        addBedBtn.setForeground(Color.WHITE);
-        addBedBtn.setFocusPainted(false);
-        addBedBtn.setBorderPainted(false);
-        addBedBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
-        addBedBtn.addActionListener(e -> addBed());
-        filterPanel.add(addBedBtn);
-        
-        JButton assignPatientBtn = new JButton("👤 Assigner Patient");
-        assignPatientBtn.setBounds(450, 75, 160, 30);
-        assignPatientBtn.setFont(new Font("Segoe UI", Font.BOLD, 12));
-        assignPatientBtn.setBackground(new Color(230, 126, 34));
-        assignPatientBtn.setForeground(Color.WHITE);
-        assignPatientBtn.setFocusPainted(false);
-        assignPatientBtn.setBorderPainted(false);
-        assignPatientBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
-        assignPatientBtn.addActionListener(e -> assignPatientToBed());
-        filterPanel.add(assignPatientBtn);
-        
+
+        JButton btnRefresh = actionBtn("🔄", new Color(52,152,219));
+        btnRefresh.setBounds(620, 35, 50, 30);
+        btnRefresh.setToolTipText("Actualiser");
+        btnRefresh.addActionListener(e -> loadData());
+        filterPanel.add(btnRefresh);
+
+        // ---- Management buttons ----
+        JButton btnAddPav = actionBtn("➕ Pavillon",    new Color(46,204,113));  btnAddPav.setBounds(20,  75,130,30); btnAddPav.setForeground(Color.BLACK); btnAddPav.addActionListener(e -> addPavillon());    filterPanel.add(btnAddPav);
+        JButton btnAddCh  = actionBtn("➕ Chambre",     new Color(52,152,219));  btnAddCh .setBounds(160, 75,130,30); btnAddCh .setForeground(Color.BLACK); btnAddCh .addActionListener(e -> addChambre());     filterPanel.add(btnAddCh);
+        JButton btnAddLit = actionBtn("➕ Lit",         new Color(155,89,182));  btnAddLit.setBounds(300, 75,130,30); btnAddLit.setForeground(Color.BLACK); btnAddLit.addActionListener(e -> addBed());         filterPanel.add(btnAddLit);
+        JButton btnAssign = actionBtn("👤 Assigner",    new Color(230,126,34));  btnAssign.setBounds(450, 75,130,30); btnAssign.setForeground(Color.BLACK); btnAssign.addActionListener(e -> assignPatientToBed()); filterPanel.add(btnAssign);
+
         panel.add(filterPanel, BorderLayout.NORTH);
-        
-        // Bed grid scroll pane
-        JScrollPane scrollPane = new JScrollPane();
-        scrollPane.setBorder(null);
-        scrollPane.getViewport().setBackground(new Color(240, 242, 245));
-        
-        bedGridPanel = new JPanel();
-        bedGridPanel.setLayout(new GridLayout(0, 4, 15, 15));
-        bedGridPanel.setBackground(new Color(240, 242, 245));
+
+        // ---- Bed grid ----
+        bedGridPanel = new JPanel(new GridLayout(0, 4, 15, 15));
+        bedGridPanel.setBackground(new Color(240,242,245));
         bedGridPanel.setBorder(BorderFactory.createEmptyBorder(15, 0, 15, 0));
-        
-        scrollPane.setViewportView(bedGridPanel);
-        panel.add(scrollPane, BorderLayout.CENTER);
-        
+
+        JScrollPane scroll = new JScrollPane(bedGridPanel);
+        scroll.setBorder(null);
+        scroll.getViewport().setBackground(new Color(240,242,245));
+        panel.add(scroll, BorderLayout.CENTER);
+
         return panel;
     }
-    
-    // ==================== ACTIVE LIST PANEL ====================
+
+    // ── ACTIVE LIST PANEL ────────────────────────────────────
     private JPanel createActiveListPanel() {
-        JPanel panel = new JPanel();
-        panel.setLayout(new BorderLayout(10, 10));
-        panel.setBackground(new Color(240, 242, 245));
-        panel.setBorder(BorderFactory.createEmptyBorder(20, 10, 20, 20));
-        
-        JLabel titleLabel = new JLabel("📋 Hospitalisations Actives");
-        titleLabel.setFont(new Font("Segoe UI", Font.BOLD, 18));
-        titleLabel.setForeground(new Color(44, 62, 80));
-        titleLabel.setBorder(BorderFactory.createEmptyBorder(0, 5, 10, 0));
-        panel.add(titleLabel, BorderLayout.NORTH);
-        
-        String[] columns = {"Patient", "Lit", "Depuis", "Jours"};
-        tableModel = new DefaultTableModel(columns, 0) {
-            @Override
-            public boolean isCellEditable(int row, int column) {
-                return false;
-            }
+        JPanel panel = new JPanel(new BorderLayout(10,10));
+        panel.setBackground(new Color(240,242,245));
+        panel.setBorder(BorderFactory.createEmptyBorder(20,10,20,20));
+
+        JLabel title = new JLabel("📋 Hospitalisations Actives");
+        title.setFont(new Font("Segoe UI", Font.BOLD, 18));
+        title.setForeground(new Color(44,62,80));
+        title.setBorder(BorderFactory.createEmptyBorder(0,5,10,0));
+        panel.add(title, BorderLayout.NORTH);
+
+        tableModel = new DefaultTableModel(new Object[]{"Patient","Lit","Chambre","Entrée","Jours"}, 0) {
+            @Override public boolean isCellEditable(int r, int c) { return false; }
         };
-        
-        activeHospitalizationsTable = new JTable(tableModel);
-        activeHospitalizationsTable.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-        activeHospitalizationsTable.setRowHeight(35);
-        activeHospitalizationsTable.getTableHeader().setFont(new Font("Segoe UI", Font.BOLD, 13));
-        activeHospitalizationsTable.getTableHeader().setBackground(new Color(52, 73, 94));
-        activeHospitalizationsTable.getTableHeader().setForeground(Color.WHITE);
-        activeHospitalizationsTable.setSelectionBackground(new Color(52, 152, 219));
-        activeHospitalizationsTable.setSelectionForeground(Color.WHITE);
-        activeHospitalizationsTable.setGridColor(new Color(189, 195, 199));
-        
-        JScrollPane scrollPane = new JScrollPane(activeHospitalizationsTable);
-        scrollPane.setBorder(BorderFactory.createLineBorder(new Color(189, 195, 199), 1));
-        panel.add(scrollPane, BorderLayout.CENTER);
-        
-        JPanel buttonPanel = new JPanel();
-        buttonPanel.setLayout(new FlowLayout(FlowLayout.CENTER, 10, 10));
-        buttonPanel.setBackground(new Color(240, 242, 245));
-        
-        JButton dischargeBtn = new JButton("🏠 Libérer Patient");
-        dischargeBtn.setFont(new Font("Segoe UI", Font.BOLD, 14));
-        dischargeBtn.setBackground(new Color(230, 126, 34));
-        dischargeBtn.setForeground(Color.WHITE);
-        dischargeBtn.setFocusPainted(false);
-        dischargeBtn.setBorderPainted(false);
-        dischargeBtn.setPreferredSize(new Dimension(180, 40));
-        dischargeBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
-        dischargeBtn.addActionListener(e -> dischargeFromTable());
-        buttonPanel.add(dischargeBtn);
-        
-        panel.add(buttonPanel, BorderLayout.SOUTH);
-        
+        activeTable = new JTable(tableModel);
+        activeTable.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        activeTable.setRowHeight(35);
+        JTableHeader th = activeTable.getTableHeader();
+        th.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        th.setBackground(new Color(52,73,94));
+        th.setForeground(Color.WHITE);
+        activeTable.setSelectionBackground(new Color(52,152,219));
+        activeTable.setSelectionForeground(Color.WHITE);
+        activeTable.setGridColor(new Color(189,195,199));
+
+        panel.add(new JScrollPane(activeTable), BorderLayout.CENTER);
+
+        JButton btnDischarge = actionBtn("🏠 Libérer Patient", new Color(230,126,34));
+        btnDischarge.setPreferredSize(new Dimension(180, 40));
+        btnDischarge.addActionListener(e -> dischargeFromTable());
+
+        JPanel bp = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 10));
+        bp.setBackground(new Color(240,242,245));
+        bp.add(btnDischarge);
+        panel.add(bp, BorderLayout.SOUTH);
+
         return panel;
     }
-    
-    // ==================== FOOTER ====================
+
+    // ── FOOTER ──────────────────────────────────────────────
     private JPanel createFooter() {
-        JPanel footer = new JPanel();
-        footer.setPreferredSize(new Dimension(1400, 35));
-        footer.setBackground(new Color(44, 62, 80));
-        footer.setLayout(new FlowLayout(FlowLayout.CENTER));
-        
-        JLabel label = new JLabel("Gestion des Hospitalisations - Système Hospitalier");
-        label.setFont(new Font("Segoe UI", Font.PLAIN, 12));
-        label.setForeground(new Color(189, 195, 199));
-        footer.add(label);
-        
-        return footer;
+        JPanel f = new JPanel(new FlowLayout(FlowLayout.CENTER));
+        f.setPreferredSize(new Dimension(1400, 35));
+        f.setBackground(new Color(44,62,80));
+        JLabel l = new JLabel("Gestion des Hospitalisations - Système Hospitalier");
+        l.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        l.setForeground(new Color(189,195,199));
+        f.add(l);
+        return f;
     }
-    
-    // ==================== LOAD DATA ====================
+
+    // ============================================================
+    // DATA LOADING  (all from DB)
+    // ============================================================
     private void loadData() {
         loadPavillons();
         loadActiveHospitalizations();
         updateStatistics();
     }
-    
+
+    /** Fill pavillonCombo from PAVILLON table */
     private void loadPavillons() {
+        pavillonIds.clear();
         pavillonCombo.removeAllItems();
-        for (String pavillon : hospitalData.keySet()) {
-            pavillonCombo.addItem(pavillon);
+        try (Connection conn = DBConnection.getConnection();
+             Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(
+                     "SELECT num_pavillon, nom_pavillon FROM PAVILLON ORDER BY num_pavillon")) {
+            while (rs.next()) {
+                pavillonIds.add(rs.getInt("num_pavillon"));
+                pavillonCombo.addItem(rs.getString("nom_pavillon"));
+            }
+        } catch (Exception e) {
+            showErr("Erreur chargement pavillons: " + e.getMessage());
         }
-        
-        if (pavillonCombo.getItemCount() > 0) {
-            pavillonCombo.setSelectedIndex(0);
-        }
+        if (pavillonCombo.getItemCount() > 0) pavillonCombo.setSelectedIndex(0);
     }
-    
+
+    /** Reload chambreCombo when pavillon changes */
     private void onPavillonChanged() {
+        chambreIds.clear();
         chambreCombo.removeAllItems();
-        String selectedPavillon = (String) pavillonCombo.getSelectedItem();
-        
-        if (selectedPavillon != null) {
-            Map<String, List<Bed>> chambres = hospitalData.get(selectedPavillon);
-            for (String chambre : chambres.keySet()) {
-                chambreCombo.addItem(chambre);
+        int pavId = selectedPavillonId();
+        if (pavId < 0) return;
+
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement pst = conn.prepareStatement(
+                     "SELECT num_chambre, numero_chambre, type_chambre, statut " +
+                     "FROM CHAMBRE WHERE num_pavillon=? ORDER BY num_chambre")) {
+            pst.setInt(1, pavId);
+            try (ResultSet rs = pst.executeQuery()) {
+                while (rs.next()) {
+                    chambreIds.add(rs.getInt("num_chambre"));
+                    chambreCombo.addItem(
+                        rs.getString("numero_chambre") + " — " +
+                        nullStr(rs.getString("type_chambre"), "Standard") + " [" +
+                        nullStr(rs.getString("statut"), "libre") + "]");
+                }
             }
-            
-            if (chambreCombo.getItemCount() > 0) {
-                chambreCombo.setSelectedIndex(0);
-            }
+        } catch (Exception e) {
+            showErr("Erreur chargement chambres: " + e.getMessage());
         }
+        if (chambreCombo.getItemCount() > 0) chambreCombo.setSelectedIndex(0);
     }
-    
+
+    /** Draw bed cards for selected chambre.
+     *  Auto-syncs LIT.statut from HOSPITALISATION truth before drawing. */
     private void loadBedGrid() {
         bedGridPanel.removeAll();
-        
-        String selectedPavillon = (String) pavillonCombo.getSelectedItem();
-        String selectedChambre = (String) chambreCombo.getSelectedItem();
-        
-        if (selectedPavillon != null && selectedChambre != null) {
-            List<Bed> beds = hospitalData.get(selectedPavillon).get(selectedChambre);
-            
-            for (Bed bed : beds) {
-                JPanel bedCard = createBedCard(bed);
-                bedGridPanel.add(bedCard);
+        int chId = selectedChambreId();
+        if (chId < 0) { bedGridPanel.revalidate(); bedGridPanel.repaint(); return; }
+
+        try (Connection conn = DBConnection.getConnection()) {
+            // Auto-sync: if an open HOSPITALISATION exists → 'occupé'; if statut='occupé' but no open hosp → 'libre'
+            try (PreparedStatement sync = conn.prepareStatement(
+                    "UPDATE LIT l SET l.statut = CASE " +
+                    "  WHEN EXISTS (SELECT 1 FROM HOSPITALISATION h WHERE h.num_lit = l.num_lit AND h.date_sortie IS NULL) THEN 'occupé' " +
+                    "  WHEN l.statut = 'occupé' THEN 'libre' " +
+                    "  ELSE l.statut END " +
+                    "WHERE l.num_chambre = ?")) {
+                sync.setInt(1, chId);
+                sync.executeUpdate();
             }
+
+            // Draw cards from the now-accurate data
+            try (PreparedStatement pst = conn.prepareStatement(
+                    "SELECT l.num_lit, l.numero_lit, l.statut, " +
+                    "p.nom AS pnom, p.prenom AS pprenom, " +
+                    "h.date_entree, h.num_hospitalisation " +
+                    "FROM LIT l " +
+                    "LEFT JOIN HOSPITALISATION h ON h.num_lit = l.num_lit AND h.date_sortie IS NULL " +
+                    "LEFT JOIN ADMISSION a ON a.num_admission = h.num_admission " +
+                    "LEFT JOIN PATIENT p ON p.num_patient = a.num_patient " +
+                    "WHERE l.num_chambre = ? ORDER BY l.num_lit")) {
+                pst.setInt(1, chId);
+                try (ResultSet rs = pst.executeQuery()) {
+                    while (rs.next()) bedGridPanel.add(createBedCard(rs));
+                }
+            }
+        } catch (Exception e) {
+            showErr("Erreur chargement lits: " + e.getMessage());
         }
-        
         bedGridPanel.revalidate();
         bedGridPanel.repaint();
     }
-    
-    // ==================== CREATE BED CARD ====================
-    private JPanel createBedCard(Bed bed) {
-        Color borderColor;
-        Color statusColor;
-        String statusIcon;
-        
-        switch (bed.status) {
-            case "occupé":
-                borderColor = new Color(231, 76, 60);
-                statusColor = new Color(231, 76, 60);
-                statusIcon = "🔴 OCCUPÉ";
-                break;
-            case "maintenance":
-                borderColor = new Color(243, 156, 18);
-                statusColor = new Color(243, 156, 18);
-                statusIcon = "🔧 MAINTENANCE";
-                break;
-            case "réservé":
-                borderColor = new Color(52, 152, 219);
-                statusColor = new Color(52, 152, 219);
-                statusIcon = "📌 RÉSERVÉ";
-                break;
-            default: // libre
-                borderColor = new Color(46, 204, 113);
-                statusColor = new Color(46, 204, 113);
-                statusIcon = "🟢 LIBRE";
+
+    /** Load active hospitalizations into the right-side table */
+    private void loadActiveHospitalizations() {
+        tableModel.setRowCount(0);
+        try (Connection conn = DBConnection.getConnection();
+             Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(
+                     "SELECT CONCAT(p.nom,' ',p.prenom) AS patient, " +
+                     "l.numero_lit, c.numero_chambre, " +
+                     "h.date_entree, " +
+                     "DATEDIFF(CURDATE(), DATE(h.date_entree)) AS jours " +
+                     "FROM HOSPITALISATION h " +
+                     "JOIN LIT l ON h.num_lit = l.num_lit " +
+                     "JOIN CHAMBRE c ON l.num_chambre = c.num_chambre " +
+                     "JOIN ADMISSION a ON h.num_admission = a.num_admission " +
+                     "JOIN PATIENT p ON a.num_patient = p.num_patient " +
+                     "WHERE h.date_sortie IS NULL " +
+                     "ORDER BY h.date_entree DESC")) {
+            while (rs.next()) {
+                tableModel.addRow(new Object[]{
+                    rs.getString("patient"),
+                    rs.getString("numero_lit"),
+                    rs.getString("numero_chambre"),
+                    rs.getString("date_entree"),
+                    rs.getInt("jours")
+                });
+            }
+        } catch (Exception e) {
+            showErr("Erreur hospitalisations actives: " + e.getMessage());
         }
-        
-        JPanel card = new JPanel();
-        card.setLayout(null);
+    }
+
+    /** Update the four stat cards */
+    private void updateStatistics() {
+        try (Connection conn = DBConnection.getConnection();
+             Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(
+                     "SELECT " +
+                     "COUNT(*) AS total, " +
+                     "SUM(statut='occupé') AS occ " +
+                     "FROM LIT")) {
+            if (rs.next()) {
+                int total = rs.getInt("total");
+                int occ   = rs.getInt("occ");
+                int free  = total - occ;
+                double rate = total > 0 ? occ * 100.0 / total : 0;
+                lblTotalBeds.setText(String.valueOf(total));
+                lblOccupied .setText(String.valueOf(occ));
+                lblFree     .setText(String.valueOf(free));
+                lblRate     .setText(String.format("%.0f%%", rate));
+            }
+        } catch (Exception e) {
+            // stats are not critical
+        }
+    }
+
+    // ============================================================
+    // BED CARD  (built from ResultSet row)
+    // ============================================================
+    private JPanel createBedCard(ResultSet rs) throws SQLException {
+        int    litId      = rs.getInt("num_lit");
+        String litNum     = rs.getString("numero_lit");
+        String statut     = nullStr(rs.getString("statut"), "libre");
+        String pnom       = rs.getString("pnom");
+        String pprenom    = rs.getString("pprenom");
+        String dateEntree = rs.getString("date_entree");
+        int    hospId     = rs.getInt("num_hospitalisation"); // 0 if LEFT JOIN found nothing
+
+        // TRUTH: a bed is occupied if and only if an open HOSPITALISATION row joined
+        boolean occupied  = (hospId != 0);
+        // If occupied by JOIN but statut says otherwise, treat as occupé visually
+        String  effectiveStatut = occupied ? "occupé" : statut;
+        String  patient   = (pnom != null) ? pnom + " " + nullStr(pprenom, "") : "";
+
+        Color borderCol, statusCol;
+        String statusIcon;
+        switch (effectiveStatut.toLowerCase()) {
+            case "occupé"      -> { borderCol = new Color(231,76,60);   statusCol = borderCol; statusIcon = "🔴 OCCUPÉ";      }
+            case "maintenance" -> { borderCol = new Color(243,156,18);  statusCol = borderCol; statusIcon = "🔧 MAINTENANCE"; }
+            case "réservé"     -> { borderCol = new Color(52,152,219);  statusCol = borderCol; statusIcon = "📌 RÉSERVÉ";     }
+            default            -> { borderCol = new Color(46,204,113);  statusCol = borderCol; statusIcon = "🟢 LIBRE";       }
+        }
+
+        JPanel card = new JPanel(null);
         card.setPreferredSize(new Dimension(200, 180));
         card.setBackground(Color.WHITE);
         card.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(borderColor, 3),
-            BorderFactory.createEmptyBorder(10, 10, 10, 10)
-        ));
+            BorderFactory.createLineBorder(borderCol, 3),
+            BorderFactory.createEmptyBorder(10,10,10,10)));
         card.setCursor(new Cursor(Cursor.HAND_CURSOR));
-        
-        // Status indicator
-        JPanel statusDot = new JPanel();
-        statusDot.setBounds(10, 10, 15, 15);
-        statusDot.setBackground(statusColor);
-        statusDot.setBorder(BorderFactory.createLineBorder(borderColor, 2));
-        card.add(statusDot);
-        
-        // Bed number
-        JLabel bedLabel = new JLabel(bed.number);
-        bedLabel.setBounds(30, 5, 160, 25);
-        bedLabel.setFont(new Font("Segoe UI", Font.BOLD, 18));
-        bedLabel.setForeground(new Color(44, 62, 80));
-        card.add(bedLabel);
-        
-        // Status
-        JLabel statusLabel = new JLabel(statusIcon);
-        statusLabel.setBounds(10, 35, 180, 20);
-        statusLabel.setFont(new Font("Segoe UI", Font.BOLD, 11));
-        statusLabel.setForeground(statusColor);
-        card.add(statusLabel);
-        
-        if (bed.occupied) {
-            JLabel patientLabel = new JLabel("<html>" + bed.patientName + "</html>");
-            patientLabel.setBounds(10, 60, 180, 40);
-            patientLabel.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-            patientLabel.setForeground(new Color(52, 73, 94));
-            card.add(patientLabel);
-            
-            JLabel dateLabel = new JLabel("Depuis: " + bed.dateEntree);
-            dateLabel.setBounds(10, 105, 180, 20);
-            dateLabel.setFont(new Font("Segoe UI", Font.ITALIC, 11));
-            dateLabel.setForeground(new Color(127, 140, 141));
-            card.add(dateLabel);
-            
-            // Action buttons
-            JButton editBtn = new JButton("✏️");
-            editBtn.setBounds(10, 135, 45, 30);
-            editBtn.setFont(new Font("Segoe UI", Font.BOLD, 11));
-            editBtn.setBackground(new Color(52, 152, 219));
-            editBtn.setForeground(Color.WHITE);
-            editBtn.setFocusPainted(false);
-            editBtn.setBorderPainted(false);
-            editBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
-            editBtn.setToolTipText("Modifier");
-            editBtn.addActionListener(e -> editBed(bed));
-            card.add(editBtn);
-            
-            JButton dischargeBtn = new JButton("Libérer");
-            dischargeBtn.setBounds(60, 135, 130, 30);
-            dischargeBtn.setFont(new Font("Segoe UI", Font.BOLD, 11));
-            dischargeBtn.setBackground(new Color(230, 126, 34));
-            dischargeBtn.setForeground(Color.WHITE);
-            dischargeBtn.setFocusPainted(false);
-            dischargeBtn.setBorderPainted(false);
-            dischargeBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
-            dischargeBtn.addActionListener(e -> dischargeBed(bed));
-            card.add(dischargeBtn);
-            
+
+        JPanel dot = new JPanel();
+        dot.setBounds(10, 10, 15, 15);
+        dot.setBackground(statusCol);
+        card.add(dot);
+
+        JLabel lNum = new JLabel(litNum);
+        lNum.setBounds(30, 5, 160, 25);
+        lNum.setFont(new Font("Segoe UI", Font.BOLD, 18));
+        lNum.setForeground(new Color(44,62,80));
+        card.add(lNum);
+
+        JLabel lStat = new JLabel(statusIcon);
+        lStat.setBounds(10, 35, 180, 20);
+        lStat.setFont(new Font("Segoe UI", Font.BOLD, 11));
+        lStat.setForeground(statusCol);
+        card.add(lStat);
+
+        if (occupied) {
+            // ── OCCUPIED bed ─────────────────────────────────
+            JLabel lPat = new JLabel("<html>" + (!patient.isBlank() ? patient : "Patient inconnu") + "</html>");
+            lPat.setBounds(10, 60, 180, 40);
+            lPat.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            lPat.setForeground(new Color(52,73,94));
+            card.add(lPat);
+
+            JLabel lDate = new JLabel("Depuis: " + (dateEntree != null ? dateEntree.substring(0,10) : "?"));
+            lDate.setBounds(10, 105, 180, 20);
+            lDate.setFont(new Font("Segoe UI", Font.ITALIC, 11));
+            lDate.setForeground(new Color(127,140,141));
+            card.add(lDate);
+
+            // "Libérer" discharges properly (date_sortie + LIT.statut='libre')
+            JButton btnFree = actionBtn("🏠 Libérer", new Color(230,126,34));
+            btnFree.setBounds(10, 135, 180, 30);
+            btnFree.addActionListener(e -> libereLit(litId, hospId, patient.isBlank() ? "ce patient" : patient));
+            card.add(btnFree);
+
         } else {
-            String message = bed.status.equals("maintenance") ? "En maintenance" :
-                           bed.status.equals("réservé") ? "Réservé" : "Disponible";
-            
-            JLabel availableLabel = new JLabel(message);
-            availableLabel.setBounds(10, 70, 180, 20);
-            availableLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
-            availableLabel.setForeground(new Color(127, 140, 141));
-            card.add(availableLabel);
-            
-            // Action buttons
-            JButton editBtn = new JButton("✏️ Modifier");
-            editBtn.setBounds(10, 135, 85, 30);
-            editBtn.setFont(new Font("Segoe UI", Font.BOLD, 11));
-            editBtn.setBackground(new Color(52, 152, 219));
-            editBtn.setForeground(Color.WHITE);
-            editBtn.setFocusPainted(false);
-            editBtn.setBorderPainted(false);
-            editBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
-            editBtn.addActionListener(e -> editBed(bed));
-            card.add(editBtn);
-            
-            JButton deleteBtn = new JButton("🗑️");
-            deleteBtn.setBounds(100, 135, 45, 30);
-            deleteBtn.setFont(new Font("Segoe UI", Font.BOLD, 11));
-            deleteBtn.setBackground(new Color(231, 76, 60));
-            deleteBtn.setForeground(Color.WHITE);
-            deleteBtn.setFocusPainted(false);
-            deleteBtn.setBorderPainted(false);
-            deleteBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
-            deleteBtn.setToolTipText("Supprimer");
-            deleteBtn.addActionListener(e -> deleteBed(bed));
-            card.add(deleteBtn);
-            
-            if (bed.status.equals("libre")) {
-                JButton assignBtn = new JButton("👤");
-                assignBtn.setBounds(150, 135, 40, 30);
-                assignBtn.setFont(new Font("Segoe UI", Font.BOLD, 11));
-                assignBtn.setBackground(new Color(46, 204, 113));
-                assignBtn.setForeground(Color.WHITE);
-                assignBtn.setFocusPainted(false);
-                assignBtn.setBorderPainted(false);
-                assignBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
-                assignBtn.setToolTipText("Assigner patient");
-                assignBtn.addActionListener(e -> assignPatient(bed));
-                card.add(assignBtn);
+            // ── FREE / RESERVED / MAINTENANCE bed ────────────
+            JLabel msg = new JLabel(
+                effectiveStatut.equals("maintenance") ? "En maintenance" :
+                effectiveStatut.equals("réservé")     ? "Réservé"       : "Disponible");
+            msg.setBounds(10, 65, 180, 20);
+            msg.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+            msg.setForeground(new Color(127,140,141));
+            card.add(msg);
+
+            // ✏️ change statut between libre / réservé / maintenance
+            JButton btnEdit = actionBtn("✏️ Statut", new Color(52,152,219));
+            btnEdit.setBounds(10, 135, 95, 30);
+            btnEdit.addActionListener(e -> editLitStatut(litId, effectiveStatut));
+            card.add(btnEdit);
+
+            JButton btnDel = actionBtn("🗑️", new Color(231,76,60));
+            btnDel.setBounds(110, 135, 40, 30);
+            btnDel.addActionListener(e -> deleteLit(litId));
+            card.add(btnDel);
+
+            // 👤 assign only on truly free beds
+            if ("libre".equalsIgnoreCase(effectiveStatut)) {
+                JButton btnAssign = actionBtn("👤", new Color(46,204,113));
+                btnAssign.setBounds(155, 135, 35, 30);
+                btnAssign.setToolTipText("Assigner patient");
+                btnAssign.addActionListener(e -> assignPatientToLit(litId));
+                card.add(btnAssign);
             }
         }
-        
+
         return card;
     }
-    
-    // ==================== CRUD OPERATIONS ====================
-    
-    // ADD PAVILLON
+
+    // ============================================================
+    // CRUD — PAVILLON
+    // ============================================================
     private void addPavillon() {
-        String name = JOptionPane.showInputDialog(this, 
-            "Nom du nouveau pavillon:", 
-            "Ajouter Pavillon", 
-            JOptionPane.QUESTION_MESSAGE);
-        
-        if (name != null && !name.trim().isEmpty()) {
-            if (hospitalData.containsKey(name)) {
-                JOptionPane.showMessageDialog(this, 
-                    "Ce pavillon existe déjà!", 
-                    "Erreur", 
-                    JOptionPane.ERROR_MESSAGE);
-            } else {
-                hospitalData.put(name, new LinkedHashMap<>());
-                JOptionPane.showMessageDialog(this, 
-                    "Pavillon ajouté avec succès!", 
-                    "Succès", 
-                    JOptionPane.INFORMATION_MESSAGE);
-                loadData();
-            }
-        }
+        JTextField fNom  = new JTextField();
+        JTextField fType = new JTextField("Standard");
+        JTextField fCap  = new JTextField("0");
+
+        JComboBox<String> svcCombo = new JComboBox<>();
+        List<Integer> svcIds = new ArrayList<>();
+        svcCombo.addItem("-- Aucun --"); svcIds.add(0);
+        try (Connection conn = DBConnection.getConnection();
+             Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery("SELECT code_service, nom_service FROM SERVICE ORDER BY nom_service")) {
+            while (rs.next()) { svcIds.add(rs.getInt("code_service")); svcCombo.addItem(rs.getString("nom_service")); }
+        } catch (Exception ignored) {}
+
+        Object[] msg = {"Nom du pavillon:", fNom, "Type:", fType, "Capacité totale:", fCap, "Service associé:", svcCombo};
+        if (JOptionPane.showConfirmDialog(this, msg, "Ajouter Pavillon", JOptionPane.OK_CANCEL_OPTION) != JOptionPane.OK_OPTION) return;
+
+        String nom = fNom.getText().trim();
+        if (nom.isEmpty()) { showErr("Nom requis."); return; }
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement pst = conn.prepareStatement(
+                     "INSERT INTO PAVILLON(nom_pavillon, type_pavillon, capacite_totale, code_service) VALUES(?,?,?,?)")) {
+            pst.setString(1, nom);
+            pst.setString(2, fType.getText().trim());
+            pst.setInt   (3, parseInt(fCap.getText(), 0));
+            int svcId = svcIds.get(svcCombo.getSelectedIndex());
+            if (svcId > 0) pst.setInt(4, svcId); else pst.setNull(4, Types.INTEGER);
+            pst.executeUpdate();
+            JOptionPane.showMessageDialog(this, "Pavillon ajouté !");
+            loadData();
+        } catch (Exception e) { showErr("Erreur ajout pavillon: " + e.getMessage()); }
     }
-    
-    // ADD CHAMBRE
+
+    // ============================================================
+    // CRUD — CHAMBRE
+    // ============================================================
     private void addChambre() {
-        String selectedPavillon = (String) pavillonCombo.getSelectedItem();
-        if (selectedPavillon == null) {
-            JOptionPane.showMessageDialog(this, 
-                "Veuillez sélectionner un pavillon!", 
-                "Erreur", 
-                JOptionPane.WARNING_MESSAGE);
-            return;
-        }
-        
-        String name = JOptionPane.showInputDialog(this, 
-            "Numéro de la nouvelle chambre:", 
-            "Ajouter Chambre", 
-            JOptionPane.QUESTION_MESSAGE);
-        
-        if (name != null && !name.trim().isEmpty()) {
-            Map<String, List<Bed>> chambres = hospitalData.get(selectedPavillon);
-            if (chambres.containsKey(name)) {
-                JOptionPane.showMessageDialog(this, 
-                    "Cette chambre existe déjà!", 
-                    "Erreur", 
-                    JOptionPane.ERROR_MESSAGE);
-            } else {
-                chambres.put(name, new ArrayList<>());
-                JOptionPane.showMessageDialog(this, 
-                    "Chambre ajoutée avec succès!", 
-                    "Succès", 
-                    JOptionPane.INFORMATION_MESSAGE);
-                onPavillonChanged();
-            }
-        }
+        int pavId = selectedPavillonId();
+        if (pavId < 0) { showErr("Sélectionnez un pavillon."); return; }
+
+        JTextField fNum  = new JTextField();
+        JComboBox<String> fType = new JComboBox<>(new String[]{"Standard","VIP","Isolement","Soins intensifs"});
+        JTextField fLits = new JTextField("2");
+        JTextField fTarif= new JTextField("100");
+        JComboBox<String> fStat = new JComboBox<>(new String[]{"libre","occupé","maintenance"});
+
+        Object[] msg = {"Numéro de chambre:", fNum, "Type:", fType, "Nb lits max:", fLits, "Tarif journalier (€):", fTarif, "Statut:", fStat};
+        if (JOptionPane.showConfirmDialog(this, msg, "Ajouter Chambre", JOptionPane.OK_CANCEL_OPTION) != JOptionPane.OK_OPTION) return;
+
+        String num = fNum.getText().trim();
+        if (num.isEmpty()) { showErr("Numéro requis."); return; }
+
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement pst = conn.prepareStatement(
+                     "INSERT INTO CHAMBRE(numero_chambre, num_pavillon, type_chambre, nombre_lits, tarif_journalier, statut) VALUES(?,?,?,?,?,?)")) {
+            pst.setString(1, num);
+            pst.setInt   (2, pavId);
+            pst.setString(3, fType.getSelectedItem().toString());
+            pst.setInt   (4, parseInt(fLits.getText(), 1));
+            pst.setDouble(5, parseDouble(fTarif.getText(), 0));
+            pst.setString(6, fStat.getSelectedItem().toString());
+            pst.executeUpdate();
+            JOptionPane.showMessageDialog(this, "Chambre ajoutée !");
+            onPavillonChanged();
+        } catch (Exception e) { showErr("Erreur ajout chambre: " + e.getMessage()); }
     }
-    
-    // ADD BED
+
+    /** Edit chambre statut (right-click style — accessible from the combo label) */
+    private void editChambreStatut() {
+        int chId = selectedChambreId();
+        if (chId < 0) { showErr("Sélectionnez une chambre."); return; }
+
+        String[] options = {"libre","occupé","maintenance"};
+        String cur = getChambreStatut(chId);
+        String newStat = (String) JOptionPane.showInputDialog(this,
+            "Modifier le statut de la chambre:", "Statut Chambre",
+            JOptionPane.QUESTION_MESSAGE, null, options, cur);
+        if (newStat == null) return;
+
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement pst = conn.prepareStatement(
+                     "UPDATE CHAMBRE SET statut=? WHERE num_chambre=?")) {
+            pst.setString(1, newStat);
+            pst.setInt   (2, chId);
+            pst.executeUpdate();
+            JOptionPane.showMessageDialog(this, "Statut chambre mis à jour !");
+            onPavillonChanged(); // refresh combo labels
+        } catch (Exception e) { showErr("Erreur: " + e.getMessage()); }
+    }
+
+    private String getChambreStatut(int chId) {
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement pst = conn.prepareStatement("SELECT statut FROM CHAMBRE WHERE num_chambre=?")) {
+            pst.setInt(1, chId);
+            try (ResultSet rs = pst.executeQuery()) {
+                if (rs.next()) return rs.getString("statut");
+            }
+        } catch (Exception ignored) {}
+        return "libre";
+    }
+
+    // ============================================================
+    // CRUD — LIT
+    // ============================================================
     private void addBed() {
-        String selectedPavillon = (String) pavillonCombo.getSelectedItem();
-        String selectedChambre = (String) chambreCombo.getSelectedItem();
-        
-        if (selectedPavillon == null || selectedChambre == null) {
-            JOptionPane.showMessageDialog(this, 
-                "Veuillez sélectionner un pavillon et une chambre!", 
-                "Erreur", 
-                JOptionPane.WARNING_MESSAGE);
-            return;
-        }
-        
-        String name = JOptionPane.showInputDialog(this, 
-            "Numéro du nouveau lit:", 
-            "Ajouter Lit", 
-            JOptionPane.QUESTION_MESSAGE);
-        
-        if (name != null && !name.trim().isEmpty()) {
-            List<Bed> beds = hospitalData.get(selectedPavillon).get(selectedChambre);
-            
-            // Check if bed already exists
-            for (Bed bed : beds) {
-                if (bed.number.equals(name)) {
-                    JOptionPane.showMessageDialog(this, 
-                        "Ce lit existe déjà!", 
-                        "Erreur", 
-                        JOptionPane.ERROR_MESSAGE);
-                    return;
-                }
-            }
-            
-            Bed newBed = new Bed(beds.size() + 1, name);
-            beds.add(newBed);
-            JOptionPane.showMessageDialog(this, 
-                "Lit ajouté avec succès!", 
-                "Succès", 
-                JOptionPane.INFORMATION_MESSAGE);
+        int chId = selectedChambreId();
+        if (chId < 0) { showErr("Sélectionnez une chambre."); return; }
+
+        JTextField fNum  = new JTextField();
+        JComboBox<String> fStat = new JComboBox<>(new String[]{"libre","réservé","maintenance"});
+
+        Object[] msg = {"Numéro du lit:", fNum, "Statut initial:", fStat};
+        if (JOptionPane.showConfirmDialog(this, msg, "Ajouter Lit", JOptionPane.OK_CANCEL_OPTION) != JOptionPane.OK_OPTION) return;
+
+        String num = fNum.getText().trim();
+        if (num.isEmpty()) { showErr("Numéro requis."); return; }
+
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement pst = conn.prepareStatement(
+                     "INSERT INTO LIT(numero_lit, num_chambre, statut) VALUES(?,?,?)")) {
+            pst.setString(1, num);
+            pst.setInt   (2, chId);
+            pst.setString(3, fStat.getSelectedItem().toString());
+            pst.executeUpdate();
+            JOptionPane.showMessageDialog(this, "Lit ajouté !");
             loadBedGrid();
             updateStatistics();
-        }
+        } catch (Exception e) { showErr("Erreur ajout lit: " + e.getMessage()); }
     }
-    
-    // EDIT BED
-    private void editBed(Bed bed) {
-        String[] options = {"Libre", "Occupé", "Maintenance", "Réservé"};
-        String currentStatus = bed.status.substring(0, 1).toUpperCase() + bed.status.substring(1);
-        
-        String newStatus = (String) JOptionPane.showInputDialog(
-            this,
-            "Modifier le statut du lit:",
-            "Modifier Lit - " + bed.number,
-            JOptionPane.QUESTION_MESSAGE,
-            null,
-            options,
-            currentStatus
-        );
-        
-        if (newStatus != null) {
-            bed.status = newStatus.toLowerCase();
-            
-            // If changing from occupied to something else, clear patient
-            if (!bed.status.equals("occupé")) {
-                bed.occupied = false;
-                bed.patientName = "";
-                bed.dateEntree = "";
-                bed.daysHospitalized = 0;
-            }
-            
-            JOptionPane.showMessageDialog(this, 
-                "Statut modifié avec succès!", 
-                "Succès", 
-                JOptionPane.INFORMATION_MESSAGE);
+
+    /** Change lit statut — only between libre / réservé / maintenance (occupé is set by assigning a patient) */
+    private void editLitStatut(int litId, String currentStatut) {
+        // Do not allow manually setting 'occupé' — that must go through "Assigner Patient"
+        String[] options = {"libre", "réservé", "maintenance"};
+        String sel = currentStatut.equals("occupé") ? "libre" : currentStatut;
+        String newStat = (String) JOptionPane.showInputDialog(this,
+            "Modifier le statut du lit\n(Pour marquer occupé, utilisez '👤 Assigner Patient') :",
+            "Statut Lit", JOptionPane.QUESTION_MESSAGE, null, options, sel);
+        if (newStat == null) return;
+
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement pst = conn.prepareStatement(
+                     "UPDATE LIT SET statut=? WHERE num_lit=?")) {
+            pst.setString(1, newStat);
+            pst.setInt(2, litId);
+            pst.executeUpdate();
+            syncChambreStatut(conn, litId);  // keep chambre statut in sync
+            JOptionPane.showMessageDialog(this, "Statut mis à jour !");
             loadBedGrid();
             updateStatistics();
-        }
+        } catch (Exception e) { showErr("Erreur: " + e.getMessage()); }
     }
-    
-    // DELETE BED
-    private void deleteBed(Bed bed) {
-        if (bed.occupied) {
-            JOptionPane.showMessageDialog(this, 
-                "Impossible de supprimer un lit occupé!", 
-                "Erreur", 
-                JOptionPane.ERROR_MESSAGE);
-            return;
-        }
-        
-        int confirm = JOptionPane.showConfirmDialog(this, 
-            "Êtes-vous sûr de vouloir supprimer ce lit?", 
-            "Confirmation", 
-            JOptionPane.YES_NO_OPTION);
-        
-        if (confirm == JOptionPane.YES_OPTION) {
-            String selectedPavillon = (String) pavillonCombo.getSelectedItem();
-            String selectedChambre = (String) chambreCombo.getSelectedItem();
-            
-            List<Bed> beds = hospitalData.get(selectedPavillon).get(selectedChambre);
-            beds.remove(bed);
-            
-            JOptionPane.showMessageDialog(this, 
-                "Lit supprimé avec succès!", 
-                "Succès", 
-                JOptionPane.INFORMATION_MESSAGE);
+
+    /** Auto-update CHAMBRE.statut based on its beds reality */
+    private void syncChambreStatut(Connection conn, int litId) {
+        try {
+            // Find num_chambre for this lit
+            PreparedStatement p = conn.prepareStatement(
+                "SELECT num_chambre FROM LIT WHERE num_lit=?");
+            p.setInt(1, litId);
+            ResultSet r = p.executeQuery();
+            if (!r.next()) return;
+            int chId = r.getInt("num_chambre");
+
+            // Count beds by statut in this chambre
+            p = conn.prepareStatement(
+                "SELECT " +
+                "SUM(statut='occupé') AS occ, " +
+                "SUM(statut='maintenance') AS maint, " +
+                "COUNT(*) AS total " +
+                "FROM LIT WHERE num_chambre=?");
+            p.setInt(1, chId);
+            r = p.executeQuery();
+            if (!r.next()) return;
+
+            int occ   = r.getInt("occ");
+            int maint = r.getInt("maint");
+            int total = r.getInt("total");
+
+            String chStatut;
+            if (occ == total)       chStatut = "occupé";
+            else if (occ > 0)       chStatut = "occupé";   // at least one occupied
+            else if (maint == total) chStatut = "maintenance";
+            else                     chStatut = "libre";
+
+            p = conn.prepareStatement("UPDATE CHAMBRE SET statut=? WHERE num_chambre=?");
+            p.setString(1, chStatut);
+            p.setInt(2, chId);
+            p.executeUpdate();
+        } catch (Exception ignored) {}
+    }
+
+    /** Delete a free lit */
+    private void deleteLit(int litId) {
+        if (JOptionPane.showConfirmDialog(this, "Supprimer ce lit ?", "Confirmation", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement pst = conn.prepareStatement("DELETE FROM LIT WHERE num_lit=?")) {
+            pst.setInt(1, litId);
+            pst.executeUpdate();
+            JOptionPane.showMessageDialog(this, "Lit supprimé !");
             loadBedGrid();
             updateStatistics();
-        }
+        } catch (Exception e) { showErr("Impossible de supprimer (lit lié à des données): " + e.getMessage()); }
     }
-    
-    // ASSIGN PATIENT TO BED
-    private void assignPatient(Bed bed) {
-        JTextField nameField = new JTextField();
-        JTextField daysField = new JTextField("1");
-        
-        Object[] message = {
-            "Nom du patient:", nameField,
-            "Jours d'hospitalisation:", daysField
-        };
-        
-        int option = JOptionPane.showConfirmDialog(this, message, 
-            "Assigner Patient - " + bed.number, 
-            JOptionPane.OK_CANCEL_OPTION);
-        
-        if (option == JOptionPane.OK_OPTION) {
-            String patientName = nameField.getText().trim();
-            String daysStr = daysField.getText().trim();
-            
-            if (patientName.isEmpty()) {
-                JOptionPane.showMessageDialog(this, 
-                    "Veuillez entrer le nom du patient!", 
-                    "Erreur", 
-                    JOptionPane.WARNING_MESSAGE);
-                return;
+
+    // ============================================================
+    // HOSPITALISATION — assign / discharge
+    // ============================================================
+    private void assignPatientToLit(int litId) {
+        // Load active admissions without current hospitalization
+        List<Integer> admIds  = new ArrayList<>();
+        List<String>  admLabels = new ArrayList<>();
+        try (Connection conn = DBConnection.getConnection();
+             Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(
+                     "SELECT a.num_admission, CONCAT(p.nom,' ',p.prenom) AS pat " +
+                     "FROM ADMISSION a " +
+                     "JOIN PATIENT p ON a.num_patient = p.num_patient " +
+                     "WHERE a.statut='en cours' " +
+                     "AND a.num_admission NOT IN (" +
+                     "  SELECT num_admission FROM HOSPITALISATION WHERE date_sortie IS NULL) " +
+                     "ORDER BY a.num_admission DESC")) {
+            while (rs.next()) {
+                admIds.add(rs.getInt("num_admission"));
+                admLabels.add("#" + rs.getInt("num_admission") + " — " + rs.getString("pat"));
             }
-            
-            try {
-                int days = Integer.parseInt(daysStr);
-                
-                bed.occupied = true;
-                bed.status = "occupé";
-                bed.patientName = patientName;
-                bed.daysHospitalized = days;
-                
-                Calendar cal = Calendar.getInstance();
-                cal.add(Calendar.DAY_OF_MONTH, -days);
-                bed.dateEntree = String.format("%02d/%02d/%04d", 
-                    cal.get(Calendar.DAY_OF_MONTH),
-                    cal.get(Calendar.MONTH) + 1,
-                    cal.get(Calendar.YEAR));
-                
-                JOptionPane.showMessageDialog(this, 
-                    "Patient assigné avec succès!", 
-                    "Succès", 
-                    JOptionPane.INFORMATION_MESSAGE);
-                loadData();
-                loadBedGrid();
-                
-            } catch (NumberFormatException e) {
-                JOptionPane.showMessageDialog(this, 
-                    "Nombre de jours invalide!", 
-                    "Erreur", 
-                    JOptionPane.ERROR_MESSAGE);
-            }
-        }
-    }
-    
-    // Quick assign from button
-    private void assignPatientToBed() {
-        String selectedPavillon = (String) pavillonCombo.getSelectedItem();
-        String selectedChambre = (String) chambreCombo.getSelectedItem();
-        
-        if (selectedPavillon == null || selectedChambre == null) {
-            JOptionPane.showMessageDialog(this, 
-                "Veuillez sélectionner un pavillon et une chambre!", 
-                "Erreur", 
-                JOptionPane.WARNING_MESSAGE);
+        } catch (Exception e) { showErr("Erreur chargement admissions: " + e.getMessage()); return; }
+
+        if (admIds.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Aucune admission en cours sans hospitalisation.", "Info", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
-        
-        List<Bed> beds = hospitalData.get(selectedPavillon).get(selectedChambre);
-        List<Bed> freeBeds = new ArrayList<>();
-        
-        for (Bed bed : beds) {
-            if (bed.status.equals("libre")) {
-                freeBeds.add(bed);
-            }
-        }
-        
-        if (freeBeds.isEmpty()) {
-            JOptionPane.showMessageDialog(this, 
-                "Aucun lit libre dans cette chambre!", 
-                "Information", 
-                JOptionPane.INFORMATION_MESSAGE);
-            return;
-        }
-        
-        String[] bedNames = freeBeds.stream().map(b -> b.number).toArray(String[]::new);
-        String selectedBedName = (String) JOptionPane.showInputDialog(
-            this,
-            "Sélectionnez un lit:",
-            "Assigner Patient",
-            JOptionPane.QUESTION_MESSAGE,
-            null,
-            bedNames,
-            bedNames[0]
-        );
-        
-        if (selectedBedName != null) {
-            for (Bed bed : freeBeds) {
-                if (bed.number.equals(selectedBedName)) {
-                    assignPatient(bed);
-                    break;
-                }
-            }
-        }
-    }
-    
-    // ==================== OTHER OPERATIONS ====================
-    
-    private void loadActiveHospitalizations() {
-        tableModel.setRowCount(0);
-        
-        for (String pavillon : hospitalData.keySet()) {
-            Map<String, List<Bed>> chambres = hospitalData.get(pavillon);
-            for (String chambre : chambres.keySet()) {
-                List<Bed> beds = chambres.get(chambre);
-                for (Bed bed : beds) {
-                    if (bed.occupied) {
-                        String litInfo = pavillon + " - " + chambre + " - " + bed.number;
-                        tableModel.addRow(new Object[]{
-                            bed.patientName,
-                            litInfo,
-                            bed.dateEntree,
-                            bed.daysHospitalized
-                        });
-                    }
-                }
-            }
-        }
-    }
-    
-    private void updateStatistics() {
-        int total = 0;
-        int occupied = 0;
-        
-        for (Map<String, List<Bed>> chambres : hospitalData.values()) {
-            for (List<Bed> beds : chambres.values()) {
-                total += beds.size();
-                for (Bed bed : beds) {
-                    if (bed.occupied) occupied++;
-                }
-            }
-        }
-        
-        int free = total - occupied;
-        double rate = total > 0 ? (occupied * 100.0 / total) : 0;
-        
-        totalBedsLabel.setText(String.valueOf(total));
-        occupiedBedsLabel.setText(String.valueOf(occupied));
-        freeBedsLabel.setText(String.valueOf(free));
-        occupancyRateLabel.setText(String.format("%.0f%%", rate));
-    }
-    
-    private void dischargeBed(Bed bed) {
-        int confirm = JOptionPane.showConfirmDialog(this,
-            "Libérer le lit pour le patient: " + bed.patientName + " ?",
-            "Confirmation",
-            JOptionPane.YES_NO_OPTION);
-        
-        if (confirm == JOptionPane.YES_OPTION) {
-            bed.occupied = false;
-            bed.status = "libre";
-            bed.patientName = "";
-            bed.dateEntree = "";
-            bed.daysHospitalized = 0;
-            
-            JOptionPane.showMessageDialog(this, 
-                "Patient libéré avec succès!", 
-                "Succès", 
-                JOptionPane.INFORMATION_MESSAGE);
-            
+
+        String[] labels = admLabels.toArray(new String[0]);
+        String chosen = (String) JOptionPane.showInputDialog(this,
+            "Sélectionner l'admission à hospitaliser:", "Assigner Patient",
+            JOptionPane.QUESTION_MESSAGE, null, labels, labels[0]);
+        if (chosen == null) return;
+
+        int admId = admIds.get(admLabels.indexOf(chosen));
+
+        try (Connection conn = DBConnection.getConnection()) {
+            // Insert HOSPITALISATION
+            PreparedStatement pst = conn.prepareStatement(
+                "INSERT INTO HOSPITALISATION(num_admission, num_lit, date_entree) VALUES(?,?,NOW())");
+            pst.setInt(1, admId);
+            pst.setInt(2, litId);
+            pst.executeUpdate();
+
+            // Update LIT statut
+            pst = conn.prepareStatement("UPDATE LIT SET statut='occupé' WHERE num_lit=?");
+            pst.setInt(1, litId);
+            pst.executeUpdate();
+
+            JOptionPane.showMessageDialog(this, "Patient assigné au lit !");
             loadData();
             loadBedGrid();
-        }
+        } catch (Exception e) { showErr("Erreur assignation: " + e.getMessage()); }
     }
-    
+
+    /** Discharge from bed card button */
+    private void libereLit(int litId, int hospId, String patientName) {
+        if (JOptionPane.showConfirmDialog(this,
+            "Libérer le lit pour " + patientName + " ?", "Confirmation",
+            JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
+
+        try (Connection conn = DBConnection.getConnection()) {
+            PreparedStatement pst = conn.prepareStatement(
+                "UPDATE HOSPITALISATION SET date_sortie=CURDATE() WHERE num_hospitalisation=?");
+            pst.setInt(1, hospId);
+            pst.executeUpdate();
+
+            pst = conn.prepareStatement("UPDATE LIT SET statut='libre' WHERE num_lit=?");
+            pst.setInt(1, litId);
+            pst.executeUpdate();
+
+            syncChambreStatut(conn, litId);  // keep chambre in sync
+
+            JOptionPane.showMessageDialog(this, "Patient libéré avec succès !");
+            loadData();
+            loadBedGrid();
+        } catch (Exception e) { showErr("Erreur libération: " + e.getMessage()); }
+    }
+
+    /** Discharge from the right-side active table */
     private void dischargeFromTable() {
-        int selectedRow = activeHospitalizationsTable.getSelectedRow();
-        if (selectedRow == -1) {
-            JOptionPane.showMessageDialog(this, 
-                "Veuillez sélectionner un patient dans la liste!",
-                "Attention", 
-                JOptionPane.WARNING_MESSAGE);
-            return;
-        }
-        
-        String patientName = (String) tableModel.getValueAt(selectedRow, 0);
-        
-        for (Map<String, List<Bed>> chambres : hospitalData.values()) {
-            for (List<Bed> beds : chambres.values()) {
-                for (Bed bed : beds) {
-                    if (bed.occupied && bed.patientName.equals(patientName)) {
-                        dischargeBed(bed);
-                        return;
-                    }
+        int row = activeTable.getSelectedRow();
+        if (row < 0) { showErr("Sélectionnez un patient dans la liste."); return; }
+
+        String litNum   = tableModel.getValueAt(row, 1).toString();
+        String chambreNum = tableModel.getValueAt(row, 2).toString();
+
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement pst = conn.prepareStatement(
+                     "SELECT l.num_lit, h.num_hospitalisation " +
+                     "FROM LIT l " +
+                     "JOIN CHAMBRE c ON l.num_chambre = c.num_chambre " +
+                     "JOIN HOSPITALISATION h ON h.num_lit = l.num_lit " +
+                     "WHERE l.numero_lit=? AND c.numero_chambre=? AND h.date_sortie IS NULL")) {
+            pst.setString(1, litNum);
+            pst.setString(2, chambreNum);
+            try (ResultSet rs = pst.executeQuery()) {
+                if (rs.next()) {
+                    libereLit(rs.getInt("num_lit"), rs.getInt("num_hospitalisation"),
+                              tableModel.getValueAt(row, 0).toString());
                 }
             }
-        }
+        } catch (Exception e) { showErr("Erreur: " + e.getMessage()); }
     }
-    
-    // ==================== MAIN ====================
+
+    /** Quick assign triggered from the toolbar button */
+    private void assignPatientToBed() {
+        int chId = selectedChambreId();
+        if (chId < 0) { showErr("Sélectionnez une chambre."); return; }
+
+        // Find a free lit in that chambre
+        List<Integer> freeIds    = new ArrayList<>();
+        List<String>  freeLabels = new ArrayList<>();
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement pst = conn.prepareStatement(
+                     "SELECT num_lit, numero_lit FROM LIT WHERE num_chambre=? AND statut='libre'")) {
+            pst.setInt(1, chId);
+            try (ResultSet rs = pst.executeQuery()) {
+                while (rs.next()) {
+                    freeIds.add(rs.getInt("num_lit"));
+                    freeLabels.add(rs.getString("numero_lit"));
+                }
+            }
+        } catch (Exception e) { showErr(e.getMessage()); return; }
+
+        if (freeIds.isEmpty()) { JOptionPane.showMessageDialog(this, "Aucun lit libre dans cette chambre."); return; }
+
+        String[] labels = freeLabels.toArray(new String[0]);
+        String chosen = (String) JOptionPane.showInputDialog(this,
+            "Sélectionner le lit:", "Assigner Patient",
+            JOptionPane.QUESTION_MESSAGE, null, labels, labels[0]);
+        if (chosen == null) return;
+
+        assignPatientToLit(freeIds.get(freeLabels.indexOf(chosen)));
+    }
+
+    // ============================================================
+    // HELPERS
+    // ============================================================
+    private JButton actionBtn(String text, Color bg) {
+        JButton b = new JButton(text);
+        b.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        b.setBackground(bg);
+        b.setForeground(Color.WHITE);
+        b.setFocusPainted(false);
+        b.setBorderPainted(false);
+        b.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        return b;
+    }
+
+    private void addLabel(JPanel p, String txt, int x, int y) {
+        JLabel l = new JLabel(txt);
+        l.setBounds(x, y, 80, 25);
+        l.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        p.add(l);
+    }
+
+    private int selectedPavillonId() {
+        int i = pavillonCombo.getSelectedIndex();
+        return (i >= 0 && i < pavillonIds.size()) ? pavillonIds.get(i) : -1;
+    }
+
+    private int selectedChambreId() {
+        int i = chambreCombo.getSelectedIndex();
+        return (i >= 0 && i < chambreIds.size()) ? chambreIds.get(i) : -1;
+    }
+
+    private String nullStr(String s, String def) { return s != null ? s : def; }
+    private int    parseInt   (String s, int    def) { try { return Integer.parseInt(s.trim()); } catch (Exception e) { return def; } }
+    private double parseDouble(String s, double def) { try { return Double.parseDouble(s.trim()); } catch (Exception e) { return def; } }
+    private void   showErr(String msg) { JOptionPane.showMessageDialog(this, msg, "Erreur", JOptionPane.ERROR_MESSAGE); }
+
+    // ============================================================
     public static void main(String[] args) {
-        try {
-            UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        
-        new HospitalizationPage();
+        try { UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()); } catch (Exception ignored) {}
+        SwingUtilities.invokeLater(HospitalizationPage::new);
     }
 }
